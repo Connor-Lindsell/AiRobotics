@@ -8,9 +8,10 @@ import matplotlib.pyplot as plt
 
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
+from sklearn.pipeline import make_pipeline
 from sklearn.svm import SVC
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import cross_val_score, StratifiedKFold
+from sklearn.model_selection import cross_val_score, cross_val_predict, StratifiedKFold
 from sklearn.metrics import (
     classification_report, accuracy_score, confusion_matrix,
     f1_score, jaccard_score, roc_auc_score,
@@ -166,6 +167,7 @@ def train_svm(
     cluster_features: np.ndarray,
     cluster_gt_labels: np.ndarray,
     cluster_labels: np.ndarray,
+    point_gt_labels: Optional[np.ndarray],
 ) -> np.ndarray:
     """
     Train a binary RBF-SVM on the k cluster-level PCA features to classify
@@ -189,11 +191,13 @@ def train_svm(
     Returns:
         svm_predictions: (N,) binary prediction for every point in the cloud
     """
-    scaler = StandardScaler()
-    X = scaler.fit_transform(cluster_features)   # (k, 4)
-    y = cluster_gt_labels                         # (k,)
+    X = cluster_features
+    y = cluster_gt_labels
 
-    svm = SVC(kernel='rbf', C=10, gamma='scale', probability=True, random_state=42)
+    svm = make_pipeline(
+        StandardScaler(),
+        SVC(kernel='rbf', C=10, gamma='scale', probability=True, random_state=42),
+    )
 
     # 10-fold stratified CV on the k clusters
     n_splits = min(10, int(np.bincount(y).min()))   # guard against tiny classes
@@ -201,41 +205,66 @@ def train_svm(
     cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
     print(f"Running {n_splits}-fold cross-validation on {len(y)} clusters ...")
     cv_scores = cross_val_score(svm, X, y, cv=cv, scoring='accuracy')
+    cv_preds = cross_val_predict(svm, X, y, cv=cv, method='predict')
+    cv_proba = cross_val_predict(svm, X, y, cv=cv, method='predict_proba')[:, 1]
     print(f"{n_splits}-Fold CV Accuracy: {cv_scores.mean():.4f} ± {cv_scores.std():.4f}")
     print(f"Per-fold scores:      {np.round(cv_scores, 4)}")
 
-    # Train on all clusters and report Tutorial 1 metrics
-    svm.fit(X, y)
-    cluster_preds = svm.predict(X)
-    cluster_proba = svm.predict_proba(X)[:, 1]
+    cv_acc = accuracy_score(y, cv_preds)
+    cv_f1  = f1_score(y, cv_preds, zero_division=0)
+    cv_iou = jaccard_score(y, cv_preds, zero_division=0)
+    cv_auc = roc_auc_score(y, cv_proba)
 
-    acc = accuracy_score(y, cluster_preds)
-    f1  = f1_score(y, cluster_preds, zero_division=0)
-    iou = jaccard_score(y, cluster_preds, zero_division=0)
-    auc = roc_auc_score(y, cluster_proba)
+    print(f"\n--- Cluster-Level CV Metrics ({len(y)} clusters) ---")
+    print(f"  Accuracy  (TP+TN / total)             : {cv_acc:.4f}")
+    print(f"  F1 score  (harmonic mean prec/recall) : {cv_f1:.4f}")
+    print(f"  IoU/Jaccard (TP / TP+FP+FN)           : {cv_iou:.4f}")
+    print(f"  ROC AUC                                : {cv_auc:.4f}")
 
-    print(f"\n--- Tutorial 1 Metrics (on all {len(y)} clusters) ---")
-    print(f"  Accuracy  (TP+TN / total)             : {acc:.4f}")
-    print(f"  F1 score  (harmonic mean prec/recall) : {f1:.4f}")
-    print(f"  IoU/Jaccard (TP / TP+FP+FN)           : {iou:.4f}")
-    print(f"  ROC AUC                                : {auc:.4f}")
-
-    cm = confusion_matrix(y, cluster_preds)
-    tn, fp, fn, tp = cm.ravel()
-    print(f"\nConfusion matrix (clusters):")
+    cv_cm = confusion_matrix(y, cv_preds, labels=[1, 0])
+    tp, fn, fp, tn = cv_cm.ravel()
+    print(f"\nConfusion matrix (clusters, CV predictions):")
     print(f"               Pred tarmac  Pred feature")
     print(f"  True tarmac     {tp:>5}         {fn:>5}")
     print(f"  True feature    {fp:>5}         {tn:>5}")
-    print(f"\nClassification report (clusters):")
-    print(classification_report(y, cluster_preds,
-                                target_names=["Feature", "Tarmac"], zero_division=0))
+    print(f"\nClassification report (clusters, CV predictions):")
+    print(classification_report(y, cv_preds,
+                                labels=[0, 1],
+                                target_names=["Feature", "Tarmac"],
+                                zero_division=0))
+
+    # Train on all clusters for final visualization predictions
+    svm.fit(X, y)
+    cluster_preds = svm.predict(X)
 
     # Map cluster-level predictions back to every point
     svm_predictions = cluster_preds[cluster_labels]   # (N,)
 
-    # Also report point-level accuracy against the original per-point ground truth
-    print(f"Points correctly labelled: "
-          f"{np.sum(cluster_preds[cluster_labels] == cluster_preds[cluster_labels])} / {len(cluster_labels)}")
+    if point_gt_labels is not None:
+        point_acc = accuracy_score(point_gt_labels, svm_predictions)
+        point_f1  = f1_score(point_gt_labels, svm_predictions, zero_division=0)
+        point_iou = jaccard_score(point_gt_labels, svm_predictions, zero_division=0)
+        point_auc = roc_auc_score(point_gt_labels, svm_predictions)
+
+        print(f"\n--- Point-Level Metrics (mapped from cluster predictions) ---")
+        print(f"  Accuracy  (TP+TN / total)             : {point_acc:.4f}")
+        print(f"  F1 score  (harmonic mean prec/recall) : {point_f1:.4f}")
+        print(f"  IoU/Jaccard (TP / TP+FP+FN)           : {point_iou:.4f}")
+        print(f"  ROC AUC                                : {point_auc:.4f}")
+
+        point_cm = confusion_matrix(point_gt_labels, svm_predictions, labels=[1, 0])
+        tp, fn, fp, tn = point_cm.ravel()
+        print(f"\nConfusion matrix (points):")
+        print(f"               Pred tarmac  Pred feature")
+        print(f"  True tarmac     {tp:>7}       {fn:>7}")
+        print(f"  True feature    {fp:>7}       {tn:>7}")
+        print(f"\nClassification report (points):")
+        print(classification_report(point_gt_labels, svm_predictions,
+                                    labels=[0, 1],
+                                    target_names=["Feature", "Tarmac"],
+                                    zero_division=0))
+        print(f"Points correctly labelled: "
+              f"{np.sum(svm_predictions == point_gt_labels)} / {len(point_gt_labels)}")
 
     return svm_predictions
 
@@ -335,7 +364,9 @@ def main() -> None:
 
     # 4. SVM: trained on k cluster-level PCA features (not individual points)
     print("\n--- SVM Classification ---")
-    svm_predictions = train_svm(cluster_features, cluster_gt_labels, cluster_labels)
+    svm_predictions = train_svm(
+        cluster_features, cluster_gt_labels, cluster_labels, gt_labels
+    )
 
     # 5. Visualise
     visualize(
