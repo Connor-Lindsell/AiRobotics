@@ -12,22 +12,10 @@ from sklearn.pipeline import make_pipeline
 from sklearn.svm import SVC
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import cross_val_score, cross_val_predict, StratifiedKFold
-from sklearn.metrics import (
-    classification_report, accuracy_score, confusion_matrix,
-    f1_score, jaccard_score, roc_auc_score,
-)
+from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, jaccard_score, roc_auc_score
 
-
-# ---------------------------------------------------------------------------
-# Data Loading
-# ---------------------------------------------------------------------------
+# Data loading and processing functions
 def load_ply_point_cloud(path: str) -> Tuple[np.ndarray, Optional[np.ndarray]]:
-    """
-    Load a point cloud from a .ply file.
-    Returns points and binary ground truth labels derived from colour:
-        1 = ground / tarmac  (brown points)
-        0 = non-ground features (buildings, aircraft, vehicles, etc.)
-    """
     pcd = o3d.io.read_point_cloud(path)
     points = np.asarray(pcd.points)
     if points.size == 0:
@@ -46,19 +34,8 @@ def load_ply_point_cloud(path: str) -> Tuple[np.ndarray, Optional[np.ndarray]]:
 
     return points, labels
 
-
-# ---------------------------------------------------------------------------
-# Clustering
-# ---------------------------------------------------------------------------
+# Clustering, PCA, SVM functions
 def perform_clustering(points: np.ndarray, k: int, z_scale: float = 5.0) -> np.ndarray:
-    """
-    Cluster the point cloud into k groups using K-Means on xyz coordinates,
-    with z (height) scaled up before normalisation so objects at different
-    elevations end up in different clusters.
-
-    Returns:
-        cluster_labels: (N,) integer array in [0, k-1]
-    """
     scaled_pts = points.copy()
     scaled_pts[:, 2] *= z_scale
 
@@ -75,10 +52,7 @@ def perform_clustering(points: np.ndarray, k: int, z_scale: float = 5.0) -> np.n
 
     return cluster_labels
 
-
-# ---------------------------------------------------------------------------
-# PCA per Cluster
-# ---------------------------------------------------------------------------
+# For each cluster, compute PCA and extract features for SVM classification
 def compute_cluster_pca(
     points: np.ndarray,
     cluster_labels: np.ndarray,
@@ -86,41 +60,15 @@ def compute_cluster_pca(
     binary_labels: Optional[np.ndarray],
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray,
            np.ndarray, np.ndarray, np.ndarray]:
-    """
-    For each cluster fit a PCA on the raw xyz coordinates and collect:
-      - cluster centre and scaled principal axes (for Polyscope visualisation)
-      - per-point PCA projection coordinates (for reference / future use)
-      - cluster-level feature vector used as SVM input (see below)
-      - cluster-level binary ground truth label (majority vote)
-
-    Cluster-level SVM features (4 per cluster):
-        [mean_z, ev1_ratio, ev2_ratio, ev3_ratio]
-
-      mean_z      — mean elevation of the cluster.  Tarmac sits near ground
-                    level; buildings and aircraft are elevated.
-      ev1_ratio   — fraction of variance along the major axis.  Flat tarmac
-                    patches are elongated → very high ev1 (≈0.7–0.9).
-      ev2_ratio   — variance along the second axis.
-      ev3_ratio   — variance along the normal axis.  For a flat surface this
-                    is ≈ 0; for a 3-D structure (building, fuselage) it is
-                    noticeably non-zero.
-
-    Returns:
-        centers           : (k, 3)
-        pc1, pc2, pc3     : (k, 3)  principal axes scaled by sqrt(eigenvalue)
-        pca_features      : (N, 3)  per-point PCA projection
-        cluster_features  : (k, 4)  cluster-level features for SVM
-        cluster_gt_labels : (k,)    binary majority-vote label per cluster
-    """
     centers = []
     pc1s, pc2s, pc3s = [], [], []
-    pca_features      = np.zeros((len(points), 3))
-    cluster_features  = np.zeros((k, 4))
+    pca_features = np.zeros((len(points), 3))
+    cluster_features = np.zeros((k, 4))
     cluster_gt_labels = np.zeros(k, dtype=int)
 
     for i in range(k):
         mask = cluster_labels == i
-        pts  = points[mask]
+        pts = points[mask]
 
         center = pts.mean(axis=0)
         centers.append(center)
@@ -134,19 +82,15 @@ def compute_cluster_pca(
         pc3s.append(pca.components_[2] * stds[2])
 
         pca_features[mask] = pca.transform(pts)
-
-        # Cluster-level feature: mean elevation + PCA explained variance ratios
         cluster_features[i] = [pts[:, 2].mean(), *pca.explained_variance_ratio_]
 
-        # Cluster binary label: majority vote of point ground truth
         if binary_labels is not None:
             cluster_gt_labels[i] = int(binary_labels[mask].mean() >= 0.5)
         else:
-            # Fallback: clusters near median elevation = tarmac
             cluster_gt_labels[i] = int(pts[:, 2].mean() <= np.median(points[:, 2]))
 
         print(f"  Cluster {i}: ev = {np.round(pca.explained_variance_ratio_, 3)} "
-              f"| mean_z = {pts[:,2].mean():.2f} m "
+              f"| mean_z = {pts[:, 2].mean():.2f} m "
               f"| gt = {'tarmac' if cluster_gt_labels[i] else 'feature'}")
 
     return (
@@ -157,40 +101,15 @@ def compute_cluster_pca(
         pca_features,
         cluster_features,
         cluster_gt_labels,
-    )
+)
 
-
-# ---------------------------------------------------------------------------
-# SVM Classification
-# ---------------------------------------------------------------------------
+# Train an SVM on the cluster features to classify tarmac vs feature clusters, then
 def train_svm(
     cluster_features: np.ndarray,
     cluster_gt_labels: np.ndarray,
     cluster_labels: np.ndarray,
     point_gt_labels: Optional[np.ndarray],
 ) -> np.ndarray:
-    """
-    Train a binary RBF-SVM on the k cluster-level PCA features to classify
-    each cluster as tarmac (1) or non-tarmac feature (0).
-
-    Why cluster-level (not per-point)?
-      Training on individual points is slow (50k+ samples) and inaccurate —
-      PCA projections from adjacent clusters look similar so the SVM cannot
-      distinguish them.  Training on the k=100 clusters uses PCA eigenvalue
-      ratios (shape descriptors) that are highly discriminative:
-        - Tarmac cluster  : ev3 ≈ 0  (flat), high ev1 (elongated patch)
-        - Feature cluster : ev3 > 0  (3-D structure), more balanced ev1/ev2
-      The SVM trains in milliseconds and the prediction is a single index
-      lookup:  svm_predictions = cluster_preds[cluster_labels]
-
-    Evaluation (Tutorial 1 + Tutorial 3 methods):
-      - 10-fold stratified cross-validation accuracy
-      - Accuracy, F1, IoU / Jaccard, ROC AUC
-      - 2×2 confusion matrix
-
-    Returns:
-        svm_predictions: (N,) binary prediction for every point in the cloud
-    """
     X = cluster_features
     y = cluster_gt_labels
 
@@ -199,27 +118,27 @@ def train_svm(
         SVC(kernel='rbf', C=10, gamma='scale', probability=True, random_state=42),
     )
 
-    # 10-fold stratified CV on the k clusters
-    n_splits = min(10, int(np.bincount(y).min()))   # guard against tiny classes
+    n_splits = min(10, int(np.bincount(y).min()))
     n_splits = max(n_splits, 2)
     cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
-    print(f"Running {n_splits}-fold cross-validation on {len(y)} clusters ...")
     cv_scores = cross_val_score(svm, X, y, cv=cv, scoring='accuracy')
     cv_preds = cross_val_predict(svm, X, y, cv=cv, method='predict')
     cv_proba = cross_val_predict(svm, X, y, cv=cv, method='predict_proba')[:, 1]
-    print(f"{n_splits}-Fold CV Accuracy: {cv_scores.mean():.4f} ± {cv_scores.std():.4f}")
-    print(f"Per-fold scores:      {np.round(cv_scores, 4)}")
 
     cv_acc = accuracy_score(y, cv_preds)
-    cv_f1  = f1_score(y, cv_preds, zero_division=0)
+    cv_f1 = f1_score(y, cv_preds, zero_division=0)
     cv_iou = jaccard_score(y, cv_preds, zero_division=0)
     cv_auc = roc_auc_score(y, cv_proba)
 
+    print(f"Running {n_splits}-fold cross-validation on {len(y)} clusters ...")
+    print(f"{n_splits}-Fold CV Accuracy: {cv_scores.mean():.3f} ± {cv_scores.std():.3f}")
+    print(f"Per-fold scores:      {np.round(cv_scores, 3)}")
+
     print(f"\n--- Cluster-Level CV Metrics ({len(y)} clusters) ---")
-    print(f"  Accuracy  (TP+TN / total)             : {cv_acc:.4f}")
-    print(f"  F1 score  (harmonic mean prec/recall) : {cv_f1:.4f}")
-    print(f"  IoU/Jaccard (TP / TP+FP+FN)           : {cv_iou:.4f}")
-    print(f"  ROC AUC                                : {cv_auc:.4f}")
+    print(f"  Accuracy  (TP+TN / total)             : {cv_acc:.3f}")
+    print(f"  F1 score  (harmonic mean prec/recall) : {cv_f1:.3f}")
+    print(f"  IoU/Jaccard (TP / TP+FP+FN)           : {cv_iou:.3f}")
+    print(f"  ROC AUC                               : {cv_auc:.3f}")
 
     cv_cm = confusion_matrix(y, cv_preds, labels=[1, 0])
     tp, fn, fp, tn = cv_cm.ravel()
@@ -227,30 +146,33 @@ def train_svm(
     print(f"               Pred tarmac  Pred feature")
     print(f"  True tarmac     {tp:>5}         {fn:>5}")
     print(f"  True feature    {fp:>5}         {tn:>5}")
-    print(f"\nClassification report (clusters, CV predictions):")
-    print(classification_report(y, cv_preds,
-                                labels=[0, 1],
-                                target_names=["Feature", "Tarmac"],
-                                zero_division=0))
 
-    # Train on all clusters for final visualization predictions
     svm.fit(X, y)
     cluster_preds = svm.predict(X)
+    cluster_proba = svm.predict_proba(X)[:, 1]
 
-    # Map cluster-level predictions back to every point
-    svm_predictions = cluster_preds[cluster_labels]   # (N,)
+    svm_predictions = cluster_preds[cluster_labels]
+    point_scores = cluster_proba[cluster_labels]
 
     if point_gt_labels is not None:
         point_acc = accuracy_score(point_gt_labels, svm_predictions)
-        point_f1  = f1_score(point_gt_labels, svm_predictions, zero_division=0)
+        point_f1 = f1_score(point_gt_labels, svm_predictions, zero_division=0)
         point_iou = jaccard_score(point_gt_labels, svm_predictions, zero_division=0)
-        point_auc = roc_auc_score(point_gt_labels, svm_predictions)
+        point_auc = roc_auc_score(point_gt_labels, point_scores)
+        n_correct = np.sum(svm_predictions == point_gt_labels)
+        n_total = len(point_gt_labels)
+        n_wrong = n_total - n_correct
+        wrong_pct = 100 * n_wrong / n_total
+        tarmac_mask = point_gt_labels == 1
+        feature_mask = ~tarmac_mask
+        tarmac_correct = np.mean(svm_predictions[tarmac_mask] == point_gt_labels[tarmac_mask])
+        feature_correct = np.mean(svm_predictions[feature_mask] == point_gt_labels[feature_mask])
 
         print(f"\n--- Point-Level Metrics (mapped from cluster predictions) ---")
-        print(f"  Accuracy  (TP+TN / total)             : {point_acc:.4f}")
-        print(f"  F1 score  (harmonic mean prec/recall) : {point_f1:.4f}")
-        print(f"  IoU/Jaccard (TP / TP+FP+FN)           : {point_iou:.4f}")
-        print(f"  ROC AUC                                : {point_auc:.4f}")
+        print(f"  Accuracy  (TP+TN / total)             : {point_acc:.3f}")
+        print(f"  F1 score  (harmonic mean prec/recall) : {point_f1:.3f}")
+        print(f"  IoU/Jaccard (TP / TP+FP+FN)           : {point_iou:.3f}")
+        print(f"  ROC AUC                               : {point_auc:.3f}")
 
         point_cm = confusion_matrix(point_gt_labels, svm_predictions, labels=[1, 0])
         tp, fn, fp, tn = point_cm.ravel()
@@ -258,20 +180,12 @@ def train_svm(
         print(f"               Pred tarmac  Pred feature")
         print(f"  True tarmac     {tp:>7}       {fn:>7}")
         print(f"  True feature    {fp:>7}       {tn:>7}")
-        print(f"\nClassification report (points):")
-        print(classification_report(point_gt_labels, svm_predictions,
-                                    labels=[0, 1],
-                                    target_names=["Feature", "Tarmac"],
-                                    zero_division=0))
-        print(f"Points correctly labelled: "
-              f"{np.sum(svm_predictions == point_gt_labels)} / {len(point_gt_labels)}")
+        print(f"\nMisclassified points: {n_wrong} / {n_total} ({wrong_pct:.3f}%)")
+        print(f"Per-class accuracy: tarmac={tarmac_correct:.3f}, feature={feature_correct:.3f}")
 
     return svm_predictions
 
-
-# ---------------------------------------------------------------------------
-# Visualization
-# ---------------------------------------------------------------------------
+# Visualization function using Polyscope
 def visualize(
     points: np.ndarray,
     gt_labels: Optional[np.ndarray],
@@ -282,15 +196,6 @@ def visualize(
     pca_pc3: np.ndarray,
     svm_predictions: np.ndarray,
 ) -> None:
-    """
-    Polyscope visualisation (toggle quantities in the GUI):
-      1. Elevation colourmap (enabled by default)
-      2. Ground truth binary labels (tarmac=1, feature=0)
-      3. K-Means cluster colours
-      4. PCA principal component arrows at each cluster centre
-         Red = PC1 (major spread), Green = PC2, Blue = PC3 (normal)
-      5. SVM binary predictions — tarmac (green) vs non-tarmac features (red)
-    """
     print("Visualizing results in Polyscope...")
     ps.init()
     ps.set_up_dir("z_up")
@@ -329,9 +234,6 @@ def visualize(
     ps.show()
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Point Cloud Segmentation pipeline (K-Means → PCA → SVM)"
@@ -343,32 +245,24 @@ def main() -> None:
                         help="Height amplification factor before K-Means (default: 5.0)")
     args = parser.parse_args()
 
-    # 1. Load — binary ground truth labels come from PLY point colours
     print(f"Loading point cloud from {args.path} ...")
     points, gt_labels = load_ply_point_cloud(args.path)
     print(f"Loaded {len(points)} points")
 
-    # 2. K-Means clustering on z-scaled xyz
     print(f"\n--- K-Means Clustering (k={args.clusters}, z_scale={args.z_scale}) ---")
     cluster_labels = perform_clustering(points, args.clusters, z_scale=args.z_scale)
-    # Uncomment to cache and skip slow clustering on re-runs:
-    # np.save("cluster_labels.npy", cluster_labels)
-    # cluster_labels = np.load("cluster_labels.npy")
 
-    # 3. PCA per cluster — also builds cluster-level features and gt labels for SVM
     print("\n--- PCA per Cluster ---")
     pca_centers, pca_pc1, pca_pc2, pca_pc3, _, \
         cluster_features, cluster_gt_labels = compute_cluster_pca(
             points, cluster_labels, args.clusters, gt_labels
         )
 
-    # 4. SVM: trained on k cluster-level PCA features (not individual points)
     print("\n--- SVM Classification ---")
     svm_predictions = train_svm(
         cluster_features, cluster_gt_labels, cluster_labels, gt_labels
     )
 
-    # 5. Visualise
     visualize(
         points, gt_labels,
         cluster_labels,
