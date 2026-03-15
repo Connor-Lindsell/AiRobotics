@@ -7,11 +7,10 @@ import matplotlib.pyplot as plt
 
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
-from sklearn.pipeline import make_pipeline
 from sklearn.svm import SVC
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import cross_val_score, cross_val_predict, StratifiedKFold
-from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, jaccard_score, roc_auc_score
+from sklearn.model_selection import cross_val_score, StratifiedKFold
+from sklearn.metrics import accuracy_score, confusion_matrix, f1_score
 
 
 def load_ply_point_cloud(path: str):
@@ -89,61 +88,48 @@ def compute_cluster_pca(points, cluster_labels, k, binary_labels):
 
 
 def train_svm(cluster_features, cluster_gt_labels, cluster_labels, point_gt_labels):
-    X = cluster_features
     y = cluster_gt_labels
 
-    svm = make_pipeline(
-        StandardScaler(),
-        SVC(kernel='rbf', C=10, gamma='scale', probability=True, random_state=42),
-    )
+    scaler = StandardScaler()
+    X = scaler.fit_transform(cluster_features)
+
+    svm = SVC(kernel='rbf', C=10, gamma='scale', random_state=42)
 
     n_splits = min(10, int(np.bincount(y).min()))
     n_splits = max(n_splits, 2)
     cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
     cv_scores = cross_val_score(svm, X, y, cv=cv, scoring='accuracy')
-    cv_preds = cross_val_predict(svm, X, y, cv=cv, method='predict')
-    cv_proba = cross_val_predict(svm, X, y, cv=cv, method='predict_proba')[:, 1]
-
-    cv_acc = accuracy_score(y, cv_preds)
-    cv_f1 = f1_score(y, cv_preds, zero_division=0)
-    cv_iou = jaccard_score(y, cv_preds, zero_division=0)
-    cv_auc = roc_auc_score(y, cv_proba)
 
     print(f"Running {n_splits}-fold cross-validation on {len(y)} clusters ...")
     print(f"{n_splits}-Fold CV Accuracy: {cv_scores.mean():.3f} ± {cv_scores.std():.3f}")
     print(f"Per-fold scores: {np.round(cv_scores, 3)}")
 
-    print(f"\n--- Cluster-Level CV Metrics ({len(y)} clusters) ---")
+    svm.fit(X, y)
+    cluster_preds = svm.predict(X)
+
+    cv_acc = accuracy_score(y, cluster_preds)
+    cv_f1 = f1_score(y, cluster_preds, zero_division=0)
+
+    print(f"\n--- Cluster-Level Metrics ({len(y)} clusters) ---")
     print(f"  Accuracy  : {cv_acc:.3f}")
     print(f"  F1 score  : {cv_f1:.3f}")
-    print(f"  IoU       : {cv_iou:.3f}")
-    print(f"  ROC AUC   : {cv_auc:.3f}")
 
-    cv_cm = confusion_matrix(y, cv_preds, labels=[1, 0])
+    cv_cm = confusion_matrix(y, cluster_preds, labels=[1, 0])
     tp, fn, fp, tn = cv_cm.ravel()
     print(f"\nConfusion matrix (clusters):")
     print(f"               Pred tarmac  Pred feature")
     print(f"  True tarmac     {tp:>5}         {fn:>5}")
     print(f"  True feature    {fp:>5}         {tn:>5}")
 
-    svm.fit(X, y)
-    cluster_preds = svm.predict(X)
-    cluster_proba = svm.predict_proba(X)[:, 1]
-
     svm_predictions = cluster_preds[cluster_labels]
-    point_scores = cluster_proba[cluster_labels]
 
     point_acc = accuracy_score(point_gt_labels, svm_predictions)
     point_f1 = f1_score(point_gt_labels, svm_predictions, zero_division=0)
-    point_iou = jaccard_score(point_gt_labels, svm_predictions, zero_division=0)
-    point_auc = roc_auc_score(point_gt_labels, point_scores)
     n_wrong = int(np.sum(svm_predictions != point_gt_labels))
 
     print(f"\n--- Point-Level Metrics ---")
     print(f"  Accuracy  : {point_acc:.3f}")
     print(f"  F1 score  : {point_f1:.3f}")
-    print(f"  IoU       : {point_iou:.3f}")
-    print(f"  ROC AUC   : {point_auc:.3f}")
 
     point_cm = confusion_matrix(point_gt_labels, svm_predictions, labels=[1, 0])
     tp, fn, fp, tn = point_cm.ravel()
