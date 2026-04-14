@@ -484,3 +484,27 @@ Run v18  |  2026-04-14 18:23:54
   batch_size           : 256
   ent_coef             : 0.0001
 ================================================
+
+================================================
+Run v19  |  2026-04-14 18:32:34
+
+  -- Results --
+  total_timesteps      : 1439744
+  ep_rew_mean          : 98.17
+  ep_len_mean          : 24.12
+
+  -- Reward Config --
+  GOAL_REWARD          : 100.0
+  OBSTACLE_PENALTY     : -35.0
+  STEP_PENALTY         : -0.1
+  PROGRESS_REWARD_SCALE: 0.4
+  MINIMUM_SAFE_DISTANCE: 1.0
+
+  -- PPO Hyperparameters --
+  TOTAL_TIMESTEPS      : 75000
+  N_ENVS               : 4
+  learning_rate        : 0.0001
+  n_steps              : 512
+  batch_size           : 256
+  ent_coef             : 0.0001
+================================================

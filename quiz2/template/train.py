@@ -13,7 +13,7 @@ import math
 # ========================================================
 # Reward Function Configuration Parameters
 # ========================================================
-OBSTACLE_PENALTY = -50.0
+OBSTACLE_PENALTY = -35.0
 GOAL_REWARD = 100.0
 STEP_PENALTY = -0.1
 PROGRESS_REWARD_SCALE = 0.4
