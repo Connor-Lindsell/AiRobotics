@@ -13,10 +13,10 @@ import math
 # ========================================================
 # Reward Function Configuration Parameters
 # ========================================================
-OBSTACLE_PENALTY = ...
-GOAL_REWARD = ...
-STEP_PENALTY = ...
-PROGRESS_REWARD_SCALE = ...
+OBSTACLE_PENALTY = -50.0
+GOAL_REWARD = 100.0
+STEP_PENALTY = -0.05
+PROGRESS_REWARD_SCALE = 2.0
 MINIMUM_SAFE_DISTANCE = 1.0
 
 def custom_observation(client, car_pos, car_orn, goal_pos, goal_orn, obstacle_pos, has_obstacle):
@@ -63,6 +63,15 @@ def custom_observation(client, car_pos, car_orn, goal_pos, goal_orn, obstacle_po
         obs_y,                # obstacle Y relative to car (0 if absent)
         float(has_obstacle),  # 1.0 = obstacle present, 0.0 = no obstacle
     ]
+
+    # Print Debug Info
+    print("\n======= Custom Observation Debug Info =======\n")
+    print(f"Car Pos: {car_pos}, Car Orientation: {car_orn}")
+    print(f"Goal Pos: {goal_pos}, Goal Orientation: {goal_orn}")
+    print(f"Obstacle Pos: {obstacle_pos}, Has Obstacle: {has_obstacle}")
+    print(f"Computed Observation: {observation}\n")
+    print("\n============================================\n")
+
     return observation
 
 
@@ -82,19 +91,26 @@ def custom_reward(car_pos, goal_pos, obstacle_pos, has_obstacle, prev_dist_to_go
     Returns:
         float: The exact mathematical reward for this timestep.
     """
-    # ========================================================
-    # TODO: Write your reward function
-    # 1. Give the agent a basic STEP_PENALTY every frame
-    # 2. Reward it for getting closer to the goal
-    # 3. Give it a large GOAL_REWARD if it reached_goal
-    # 4. Give it a large OBSTACLE_PENALTY if it gets too close to the obstacle
-    # 
-    # HINT: If your agent has trouble avoiding the obstacle and drives right into it,
-    # you can try adding a "proximity penalty" (repulsive field). If the car gets 
-    # within a certain distance of the obstacle, start gradually subtracting reward!
-    # ========================================================
     
-    reward = 0.0 # Dummy return, replace this
+    # 1. Step penalty every frame — encourages urgency, punishes spinning in circles
+    reward = STEP_PENALTY
+
+    # 2. Progress reward — positive when closing in on goal, negative when drifting away
+    reward += (prev_dist_to_goal - dist_to_goal) * PROGRESS_REWARD_SCALE
+
+    # 3. Large bonus for reaching the goal
+    if reached_goal:
+        reward += GOAL_REWARD
+
+    # 4. Obstacle collision penalty — triggered when the car enters the danger radius
+    if has_obstacle and obstacle_pos is not None:
+        dist_to_obstacle = math.sqrt(
+            (car_pos[0] - obstacle_pos[0]) ** 2 +
+            (car_pos[1] - obstacle_pos[1]) ** 2
+        )
+        if dist_to_obstacle < MINIMUM_SAFE_DISTANCE:
+            reward += OBSTACLE_PENALTY
+
     return reward
 
 # You can change these variables for more training steps or if you have a powerful CPU:
