@@ -35,15 +35,34 @@ def custom_observation(client, car_pos, car_orn, goal_pos, goal_orn, obstacle_po
     Returns:
         list of float: The computed observation state array.
     """
-    # ========================================================
-    # TODO: Calculate the Observation Space for the Neural Network
-    # By default, PyBullet returns global coordinates (X, Y).
-    # You must convert the goal position and obstacle position into 
-    # RELATIVE coordinates (where is the object relative to the car?)
-    # HINT: Look up client.invertTransform and client.multiplyTransforms
-    # ========================================================
-    
-    observation = [0.0, 0.0, 0.0, 0.0, 0.0] # Dummy return, replace this
+    # Step 1: Invert the car's world transform to get the world → car-frame transform
+    inv_car_pos, inv_car_orn = client.invertTransform(car_pos, car_orn)
+
+    # Step 2: Express the goal position in the car's local frame
+    goal_rel_pos, _ = client.multiplyTransforms(
+        inv_car_pos, inv_car_orn,
+        goal_pos, [0, 0, 0, 1]  # identity orientation — we only care about position
+    )
+
+    # Step 3: Express the obstacle position in the car's local frame (or pad with zeros)
+    if has_obstacle and obstacle_pos is not None:
+        obs_world = [obstacle_pos[0], obstacle_pos[1], 0.0]  # promote (x,y) → (x,y,z)
+        obs_rel_pos, _ = client.multiplyTransforms(
+            inv_car_pos, inv_car_orn,
+            obs_world, [0, 0, 0, 1]
+        )
+        obs_x, obs_y = obs_rel_pos[0], obs_rel_pos[1]
+    else:
+        obs_x, obs_y = 0.0, 0.0
+
+    # Step 4: Pack into a flat size-5 array
+    observation = [
+        goal_rel_pos[0],      # goal X relative to car
+        goal_rel_pos[1],      # goal Y relative to car
+        obs_x,                # obstacle X relative to car (0 if absent)
+        obs_y,                # obstacle Y relative to car (0 if absent)
+        float(has_obstacle),  # 1.0 = obstacle present, 0.0 = no obstacle
+    ]
     return observation
 
 
