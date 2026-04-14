@@ -15,9 +15,11 @@ import math
 # ========================================================
 OBSTACLE_PENALTY = -50.0
 GOAL_REWARD = 100.0
-STEP_PENALTY = -0.05
-PROGRESS_REWARD_SCALE = 2.0
+STEP_PENALTY = -0.1
+PROGRESS_REWARD_SCALE = 0.8
 MINIMUM_SAFE_DISTANCE = 1.0
+REGRESSION_PENALTY_SCALE = 1.5  # extra multiplier when car moves AWAY from goal (tut6: bad-state penalty)
+PROXIMITY_SCALE          = 0.3  # dense per-step bonus for being close (tut7: Flappy Bird alignment signal)
 
 MODEL_DIR  = "model"
 MODEL_NAME = "ppo_car"
@@ -99,14 +101,23 @@ def custom_reward(car_pos, goal_pos, obstacle_pos, has_obstacle, prev_dist_to_go
     # 1. Step penalty every frame — encourages urgency, punishes spinning in circles
     reward = STEP_PENALTY
 
-    # 2. Progress reward — positive when closing in on goal, negative when drifting away
-    reward += (prev_dist_to_goal - dist_to_goal) * PROGRESS_REWARD_SCALE
+    # 2. Progress reward — asymmetric: drifting away penalised 1.5× harder than closing in is rewarded.
+    # Concept from tut6 Q-learning: negative reward for bad states gives cleaner gradient signal.
+    progress = prev_dist_to_goal - dist_to_goal
+    if progress >= 0:
+        reward += progress * PROGRESS_REWARD_SCALE
+    else:
+        reward += progress * PROGRESS_REWARD_SCALE * REGRESSION_PENALTY_SCALE
 
-    # 3. Large bonus for reaching the goal
+    # 3. Dense proximity bonus — reward being CLOSE to goal at every step, not just at termination.
+    # Concept from tut7 Flappy Bird: shaped signal at every timestep keeps gradient flowing.
+    reward += PROXIMITY_SCALE / (dist_to_goal + 1.0)
+
+    # 4. Large bonus for reaching the goal
     if reached_goal:
         reward += GOAL_REWARD
 
-    # 4. Obstacle collision penalty — triggered when the car enters the danger radius
+    # 5. Obstacle collision penalty — triggered when the car enters the danger radius
     if has_obstacle and obstacle_pos is not None:
         dist_to_obstacle = math.sqrt(
             (car_pos[0] - obstacle_pos[0]) ** 2 +
@@ -178,17 +189,30 @@ if __name__ == "__main__":
     if os.path.exists(latest + ".zip"):
         print(f"Resuming from {latest}.zip ...")
         model = PPO.load(latest, env=env, tensorboard_log="./ppo_tensorboard/")
-        model.ent_coef = 0.005  # override entropy after loading (0.01 → 0.005 to reduce jitter)
+        model.ent_coef = 0.001
+
+        # clip_range must be a schedule callable — a plain scalar is silently ignored after load
+        model.clip_range = lambda _: 0.1
+
+        # learning_rate attribute alone doesn't reach the optimizer — update param_groups directly
+        model.learning_rate = 0.0001
+        for param_group in model.policy.optimizer.param_groups:
+            param_group["lr"] = 0.0001
+
+        model.vf_coef = 1.0  # was only set in fresh constructor — propagate after load too
 
     else:
         print("No previous model found — training from scratch.")
         model = PPO(
             "MlpPolicy",
             env,
-            learning_rate=0.0003,
-            n_steps=512,
+            learning_rate=0.0001,  # was 0.0003 — smaller updates = smoother convergence
+            n_steps=1024,          # was 512 — longer rollout = better gradient estimate
             batch_size=256,
-            ent_coef=0.005, # encourages exploration, After third run steering is very jittery, decrease 0.01 → 0.005
+            ent_coef=0.001,        # was 0.005 — less random action noise in steering
+            clip_range=0.1,        # was 0.2 (default) — limits policy shift per update
+            vf_coef=1.0,           # was 0.5 (default) — weights critic update more to stabilise value_loss
+            gamma=0.97,            # was 0.99 (default) — less discount → prefer immediate progress over long detours
             tensorboard_log="./ppo_tensorboard/",
             verbose=1,
         )
