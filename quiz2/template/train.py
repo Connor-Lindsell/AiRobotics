@@ -16,10 +16,10 @@ import math
 OBSTACLE_PENALTY = -50.0
 GOAL_REWARD = 100.0
 STEP_PENALTY = -0.1
-PROGRESS_REWARD_SCALE = 0.8
+PROGRESS_REWARD_SCALE = 0.4
 MINIMUM_SAFE_DISTANCE = 1.0
-REGRESSION_PENALTY_SCALE = 1.5  # extra multiplier when car moves AWAY from goal (tut6: bad-state penalty)
-PROXIMITY_SCALE          = 0.3  # dense per-step bonus for being close (tut7: Flappy Bird alignment signal)
+REGRESSION_PENALTY_SCALE = 1.5  # extra multiplier when car moves AWAY from goal 
+PROXIMITY_SCALE          = 0.3  # dense per-step bonus for being close 
 
 MODEL_DIR  = "model"
 MODEL_NAME = "ppo_car"
@@ -102,15 +102,14 @@ def custom_reward(car_pos, goal_pos, obstacle_pos, has_obstacle, prev_dist_to_go
     reward = STEP_PENALTY
 
     # 2. Progress reward — asymmetric: drifting away penalised 1.5× harder than closing in is rewarded.
-    # Concept from tut6 Q-learning: negative reward for bad states gives cleaner gradient signal.
     progress = prev_dist_to_goal - dist_to_goal
     if progress >= 0:
         reward += progress * PROGRESS_REWARD_SCALE
     else:
         reward += progress * PROGRESS_REWARD_SCALE * REGRESSION_PENALTY_SCALE
 
+
     # 3. Dense proximity bonus — reward being CLOSE to goal at every step, not just at termination.
-    # Concept from tut7 Flappy Bird: shaped signal at every timestep keeps gradient flowing.
     reward += PROXIMITY_SCALE / (dist_to_goal + 1.0)
 
     # 4. Large bonus for reaching the goal
@@ -189,7 +188,7 @@ if __name__ == "__main__":
     if os.path.exists(latest + ".zip"):
         print(f"Resuming from {latest}.zip ...")
         model = PPO.load(latest, env=env, tensorboard_log="./ppo_tensorboard/")
-        model.ent_coef = 0.001
+        model.ent_coef = 0.0001  # was 0.005 — less random action noise in steering, set after load to override default
 
         # clip_range must be a schedule callable — a plain scalar is silently ignored after load
         model.clip_range = lambda _: 0.1

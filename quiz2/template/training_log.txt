@@ -292,3 +292,195 @@ v10 changes — tutorial-inspired reward shaping:
 ep_rew_mean held ~102, ep_len_mean unchanged ~24.
 No visible improvement in steering behaviour.
 ================================================
+
+================================================
+Run v11  |  2026-04-14 17:34:54
+
+  -- Results --
+  total_timesteps      : 833536
+  ep_rew_mean          : 98.57
+  ep_len_mean          : 23.99
+
+  -- Reward Config --
+  GOAL_REWARD          : 100.0
+  OBSTACLE_PENALTY     : -50.0
+  STEP_PENALTY         : -0.1
+  PROGRESS_REWARD_SCALE: 0.5
+  MINIMUM_SAFE_DISTANCE: 1.0
+
+  -- PPO Hyperparameters --
+  TOTAL_TIMESTEPS      : 75000
+  N_ENVS               : 4
+  learning_rate        : 0.0001
+  n_steps              : 512
+  batch_size           : 256
+  ent_coef             : 0.001
+================================================
+
+================================================
+Run v12  |  2026-04-14 17:46:42
+
+  -- Results --
+  total_timesteps      : 909312
+  ep_rew_mean          : 100.1
+  ep_len_mean          : 23.22
+
+  -- Reward Config --
+  GOAL_REWARD          : 100.0
+  OBSTACLE_PENALTY     : -50.0
+  STEP_PENALTY         : -0.1
+  PROGRESS_REWARD_SCALE: 0.5
+  MINIMUM_SAFE_DISTANCE: 1.0
+
+  -- PPO Hyperparameters --
+  TOTAL_TIMESTEPS      : 75000
+  N_ENVS               : 4
+  learning_rate        : 0.0001
+  n_steps              : 512
+  batch_size           : 256
+  ent_coef             : 0.001
+================================================
+
+================================================
+Run v13  |  2026-04-14 17:51:00
+
+  -- Results --
+  total_timesteps      : 985088
+  ep_rew_mean          : 103.16
+  ep_len_mean          : 24.18
+
+  -- Reward Config --
+  GOAL_REWARD          : 100.0
+  OBSTACLE_PENALTY     : -50.0
+  STEP_PENALTY         : -0.1
+  PROGRESS_REWARD_SCALE: 0.5
+  MINIMUM_SAFE_DISTANCE: 1.0
+
+  -- PPO Hyperparameters --
+  TOTAL_TIMESTEPS      : 75000
+  N_ENVS               : 4
+  learning_rate        : 0.0001
+  n_steps              : 512
+  batch_size           : 256
+  ent_coef             : 0.001
+================================================
+
+================================================
+Run v14  |  2026-04-14 17:56:08
+
+  -- Results --
+  total_timesteps      : 1060864
+  ep_rew_mean          : 103.11
+  ep_len_mean          : 24.51
+
+  -- Reward Config --
+  GOAL_REWARD          : 100.0
+  OBSTACLE_PENALTY     : -50.0
+  STEP_PENALTY         : -0.1
+  PROGRESS_REWARD_SCALE: 0.5
+  MINIMUM_SAFE_DISTANCE: 1.0
+
+  -- PPO Hyperparameters --
+  TOTAL_TIMESTEPS      : 75000
+  N_ENVS               : 4
+  learning_rate        : 0.0001
+  n_steps              : 512
+  batch_size           : 256
+  ent_coef             : 0.001
+================================================
+
+================================================
+Run v15  |  2026-04-14 18:04:34
+
+  -- Results --
+  total_timesteps      : 1136640
+  ep_rew_mean          : 102.25
+  ep_len_mean          : 23.24
+
+  -- Reward Config --
+  GOAL_REWARD          : 100.0
+  OBSTACLE_PENALTY     : -50.0
+  STEP_PENALTY         : -0.1
+  PROGRESS_REWARD_SCALE: 0.4
+  MINIMUM_SAFE_DISTANCE: 1.0
+
+  -- PPO Hyperparameters --
+  TOTAL_TIMESTEPS      : 75000
+  N_ENVS               : 4
+  learning_rate        : 0.0001
+  n_steps              : 512
+  batch_size           : 256
+  ent_coef             : 0.001
+================================================
+
+================================================
+Run v16  |  2026-04-14 18:08:14
+
+  -- Results --
+  total_timesteps      : 1212416
+  ep_rew_mean          : 102.29
+  ep_len_mean          : 24.34
+
+  -- Reward Config --
+  GOAL_REWARD          : 100.0
+  OBSTACLE_PENALTY     : -50.0
+  STEP_PENALTY         : -0.1
+  PROGRESS_REWARD_SCALE: 0.4
+  MINIMUM_SAFE_DISTANCE: 1.0
+
+  -- PPO Hyperparameters --
+  TOTAL_TIMESTEPS      : 75000
+  N_ENVS               : 4
+  learning_rate        : 0.0001
+  n_steps              : 512
+  batch_size           : 256
+  ent_coef             : 0.001
+================================================
+
+================================================
+Run v17  |  2026-04-14 18:17:57
+
+  -- Results --
+  total_timesteps      : 1288192
+  ep_rew_mean          : 99.27
+  ep_len_mean          : 23.62
+
+  -- Reward Config --
+  GOAL_REWARD          : 100.0
+  OBSTACLE_PENALTY     : -50.0
+  STEP_PENALTY         : -0.1
+  PROGRESS_REWARD_SCALE: 0.4
+  MINIMUM_SAFE_DISTANCE: 1.0
+
+  -- PPO Hyperparameters --
+  TOTAL_TIMESTEPS      : 75000
+  N_ENVS               : 4
+  learning_rate        : 0.0001
+  n_steps              : 512
+  batch_size           : 256
+  ent_coef             : 0.0005
+================================================
+
+================================================
+Run v18  |  2026-04-14 18:23:54
+
+  -- Results --
+  total_timesteps      : 1363968
+  ep_rew_mean          : 97.78
+  ep_len_mean          : 23.85
+
+  -- Reward Config --
+  GOAL_REWARD          : 100.0
+  OBSTACLE_PENALTY     : -50.0
+  STEP_PENALTY         : -0.1
+  PROGRESS_REWARD_SCALE: 0.4
+  MINIMUM_SAFE_DISTANCE: 1.0
+
+  -- PPO Hyperparameters --
+  TOTAL_TIMESTEPS      : 75000
+  N_ENVS               : 4
+  learning_rate        : 0.0001
+  n_steps              : 512
+  batch_size           : 256
+  ent_coef             : 0.0001
+================================================
