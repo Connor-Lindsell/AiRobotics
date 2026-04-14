@@ -13,12 +13,12 @@ import math
 # ========================================================
 # Reward Function Configuration Parameters
 # ========================================================
-OBSTACLE_PENALTY = -35.0
-GOAL_REWARD = 100.0
-STEP_PENALTY = -0.1
-PROGRESS_REWARD_SCALE = 0.4
+OBSTACLE_PENALTY = -250.0
+GOAL_REWARD = 900.0
+STEP_PENALTY = -1.0
+PROGRESS_REWARD_SCALE = 4.0
 MINIMUM_SAFE_DISTANCE = 1.0
-REGRESSION_PENALTY_SCALE = 1.5  # extra multiplier when car moves AWAY from goal 
+REGRESSION_PENALTY_SCALE = 1.2  # extra multiplier when car moves AWAY from goal 
 PROXIMITY_SCALE          = 0.3  # dense per-step bonus for being close 
 
 MODEL_DIR  = "model"
@@ -188,13 +188,13 @@ if __name__ == "__main__":
     if os.path.exists(latest + ".zip"):
         print(f"Resuming from {latest}.zip ...")
         model = PPO.load(latest, env=env, tensorboard_log="./ppo_tensorboard/")
-        model.ent_coef = 0.0001  # was 0.005 — less random action noise in steering, set after load to override default
+        model.ent_coef = 0.01  # was 0.005 — less random action noise in steering, set after load to override default
 
         # clip_range must be a schedule callable — a plain scalar is silently ignored after load
         model.clip_range = lambda _: 0.1
 
         # learning_rate attribute alone doesn't reach the optimizer — update param_groups directly
-        model.learning_rate = 0.0001
+        model.learning_rate = 0.0003
         for param_group in model.policy.optimizer.param_groups:
             param_group["lr"] = 0.0001
 
@@ -205,15 +205,15 @@ if __name__ == "__main__":
         model = PPO(
             "MlpPolicy",
             env,
-            learning_rate=0.0001,  # was 0.0003 — smaller updates = smoother convergence
-            n_steps=1024,          # was 512 — longer rollout = better gradient estimate
-            batch_size=256,
-            ent_coef=0.001,        # was 0.005 — less random action noise in steering
-            clip_range=0.1,        # was 0.2 (default) — limits policy shift per update
-            vf_coef=1.0,           # was 0.5 (default) — weights critic update more to stabilise value_loss
-            gamma=0.97,            # was 0.99 (default) — less discount → prefer immediate progress over long detours
-            tensorboard_log="./ppo_tensorboard/",
-            verbose=1,
+            learning_rate = 0.0003,  # was 0.0003 — smaller updates = smoother convergence
+            n_steps = 512,          # was 512 — longer rollout = better gradient estimate
+            batch_size = 256,
+            ent_coef = 0.01,        # was 0.005 — less random action noise in steering
+            clip_range = 0.1,        # was 0.2 (default) — limits policy shift per update
+            vf_coef = 1.0,           # was 0.5 (default) — weights critic update more to stabilise value_loss
+            gamma = 0.97,            # was 0.99 (default) — less discount → prefer immediate progress over long detours
+            tensorboard_log = "./ppo_tensorboard/",
+            verbose = 1,
         )
 
     # Train — reset_num_timesteps=False keeps the step counter continuous across runs
