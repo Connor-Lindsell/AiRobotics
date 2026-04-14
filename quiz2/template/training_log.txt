@@ -21,3 +21,79 @@ Run v1  |  2026-04-14 (initial run)
   batch_size           : 256
   ent_coef             : 0.01
 ================================================
+
+================================================
+Run v2  |  2026-04-14 15:09:43
+
+  -- Results --
+  total_timesteps      : 151552
+  ep_rew_mean          : 111.44
+  ep_len_mean          : 24.9
+
+  -- Reward Config --
+  GOAL_REWARD          : 100.0
+  OBSTACLE_PENALTY     : -50.0
+  STEP_PENALTY         : -0.05
+  PROGRESS_REWARD_SCALE: 2.0
+  MINIMUM_SAFE_DISTANCE: 1.0
+
+  -- PPO Hyperparameters --
+  TOTAL_TIMESTEPS      : 75000
+  N_ENVS               : 4
+  learning_rate        : 0.0003
+  n_steps              : 512
+  batch_size           : 256
+  ent_coef             : 0.01
+================================================
+
+================================================
+Run v3  |  2026-04-14 15:19:36
+
+  -- Results --
+  total_timesteps      : 227328
+  ep_rew_mean          : 109.98
+  ep_len_mean          : 24.9
+
+  -- Reward Config --
+  GOAL_REWARD          : 100.0
+  OBSTACLE_PENALTY     : -50.0
+  STEP_PENALTY         : -0.05
+  PROGRESS_REWARD_SCALE: 2.0
+  MINIMUM_SAFE_DISTANCE: 1.0
+
+  -- PPO Hyperparameters --
+  TOTAL_TIMESTEPS      : 75000
+  N_ENVS               : 4
+  learning_rate        : 0.0003
+  n_steps              : 512
+  batch_size           : 256
+  ent_coef             : 0.01
+================================================
+
+================================================
+Run v4  |  2026-04-14 15:34:11
+
+  -- Results --
+  total_timesteps      : 303104
+  ep_rew_mean          : 111.72
+  ep_len_mean          : 25.29
+
+  -- Reward Config --
+  GOAL_REWARD          : 100.0
+  OBSTACLE_PENALTY     : -50.0
+  STEP_PENALTY         : -0.05
+  PROGRESS_REWARD_SCALE: 1.5
+  MINIMUM_SAFE_DISTANCE: 1.0
+
+  -- PPO Hyperparameters --
+  TOTAL_TIMESTEPS      : 75000
+  N_ENVS               : 4
+  learning_rate        : 0.0003
+  n_steps              : 512
+  batch_size           : 256
+  ent_coef             : 0.01
+================================================
+Changed the progress reward scale to improve of 
+steering control, that didnt help it only made 
+length of the path longer.
+================================================

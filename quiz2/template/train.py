@@ -178,6 +178,8 @@ if __name__ == "__main__":
     if os.path.exists(latest + ".zip"):
         print(f"Resuming from {latest}.zip ...")
         model = PPO.load(latest, env=env, tensorboard_log="./ppo_tensorboard/")
+        model.ent_coef = 0.005  # override entropy after loading (0.01 → 0.005 to reduce jitter)
+
     else:
         print("No previous model found — training from scratch.")
         model = PPO(
@@ -186,7 +188,7 @@ if __name__ == "__main__":
             learning_rate=0.0003,
             n_steps=512,
             batch_size=256,
-            ent_coef=0.01,
+            ent_coef=0.005, # encourages exploration, After third run steering is very jittery, decrease 0.01 → 0.005
             tensorboard_log="./ppo_tensorboard/",
             verbose=1,
         )
