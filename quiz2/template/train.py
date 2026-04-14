@@ -13,13 +13,13 @@ import math
 # ========================================================
 # Reward Function Configuration Parameters
 # ========================================================
-OBSTACLE_PENALTY = -250.0
+OBSTACLE_PENALTY = -400.0
 GOAL_REWARD = 900.0
-STEP_PENALTY = -1.0
-PROGRESS_REWARD_SCALE = 4.0
+STEP_PENALTY = -2.0
+PROGRESS_REWARD_SCALE = 10.0
 MINIMUM_SAFE_DISTANCE = 1.0
-REGRESSION_PENALTY_SCALE = 1.2  # extra multiplier when car moves AWAY from goal 
-PROXIMITY_SCALE          = 0.3  # dense per-step bonus for being close 
+PROXIMITY_SCALE          = 0.25 
+OBSTACLE_PROXIMITY_SCALE = 2.0  
 
 MODEL_DIR  = "model"
 MODEL_NAME = "ppo_car"
@@ -105,9 +105,6 @@ def custom_reward(car_pos, goal_pos, obstacle_pos, has_obstacle, prev_dist_to_go
     progress = prev_dist_to_goal - dist_to_goal
     if progress >= 0:
         reward += progress * PROGRESS_REWARD_SCALE
-    else:
-        reward += progress * PROGRESS_REWARD_SCALE * REGRESSION_PENALTY_SCALE
-
 
     # 3. Dense proximity bonus — reward being CLOSE to goal at every step, not just at termination.
     reward += PROXIMITY_SCALE / (dist_to_goal + 1.0)
@@ -124,6 +121,13 @@ def custom_reward(car_pos, goal_pos, obstacle_pos, has_obstacle, prev_dist_to_go
         )
         if dist_to_obstacle < MINIMUM_SAFE_DISTANCE:
             reward += OBSTACLE_PENALTY
+    
+        # Penalty for to close to obstacle (but not colliding) — encourages learning to steer around it rather than just crashing through
+        proximity_zone = MINIMUM_SAFE_DISTANCE * OBSTACLE_PROXIMITY_SCALE
+        if dist_to_obstacle < proximity_zone:
+            # Linear scale: 0 penalty at zone edge, 0.5 * OBSTACLE_PENALTY at collision boundary
+            penetration = (proximity_zone - dist_to_obstacle) / (proximity_zone - MINIMUM_SAFE_DISTANCE)
+            reward += OBSTACLE_PENALTY * 0.5 * penetration
 
     return reward
 
@@ -155,6 +159,8 @@ def save_training_log(version, model, total_timesteps):
         f.write(f"  STEP_PENALTY         : {STEP_PENALTY}\n")
         f.write(f"  PROGRESS_REWARD_SCALE: {PROGRESS_REWARD_SCALE}\n")
         f.write(f"  MINIMUM_SAFE_DISTANCE: {MINIMUM_SAFE_DISTANCE}\n")
+        f.write(f"  PROXIMITY_SCALE      : {PROXIMITY_SCALE}\n")
+        f.write(f"  OBSTACLE_PROXIMITY_SCALE: {OBSTACLE_PROXIMITY_SCALE}\n")
         f.write(f"\n  -- PPO Hyperparameters --\n")
         f.write(f"  TOTAL_TIMESTEPS      : {TOTAL_TIMESTEPS}\n")
         f.write(f"  N_ENVS               : {N_ENVS}\n")
@@ -165,7 +171,7 @@ def save_training_log(version, model, total_timesteps):
         f.write(f"{'='*48}\n")
 
 # You can change these variables for more training steps or if you have a powerful CPU:
-TOTAL_TIMESTEPS = 75000      # define the number of steps used during the training
+TOTAL_TIMESTEPS = 100000      # define the number of steps used during the training
 N_ENVS = 4                   # number of processor core used for multithreading
 
 if __name__ == "__main__":
@@ -188,30 +194,15 @@ if __name__ == "__main__":
     if os.path.exists(latest + ".zip"):
         print(f"Resuming from {latest}.zip ...")
         model = PPO.load(latest, env=env, tensorboard_log="./ppo_tensorboard/")
-        model.ent_coef = 0.01  # was 0.005 — less random action noise in steering, set after load to override default
-
-        # clip_range must be a schedule callable — a plain scalar is silently ignored after load
-        model.clip_range = lambda _: 0.1
-
-        # learning_rate attribute alone doesn't reach the optimizer — update param_groups directly
-        model.learning_rate = 0.0003
-        for param_group in model.policy.optimizer.param_groups:
-            param_group["lr"] = 0.0001
-
-        model.vf_coef = 1.0  # was only set in fresh constructor — propagate after load too
-
     else:
         print("No previous model found — training from scratch.")
         model = PPO(
             "MlpPolicy",
             env,
-            learning_rate = 0.0003,  # was 0.0003 — smaller updates = smoother convergence
-            n_steps = 512,          # was 512 — longer rollout = better gradient estimate
+            learning_rate = 0.0003,  #
+            n_steps = 512,          
             batch_size = 256,
             ent_coef = 0.01,        # was 0.005 — less random action noise in steering
-            clip_range = 0.1,        # was 0.2 (default) — limits policy shift per update
-            vf_coef = 1.0,           # was 0.5 (default) — weights critic update more to stabilise value_loss
-            gamma = 0.97,            # was 0.99 (default) — less discount → prefer immediate progress over long detours
             tensorboard_log = "./ppo_tensorboard/",
             verbose = 1,
         )
