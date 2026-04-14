@@ -8,17 +8,12 @@ from train import custom_reward, custom_observation
 
 def test_policy():
     print("Loading saved PPO model...")
-    # ========================================================
-    # TODO: Load your custom saved model here once it is trained!
-    # e.g., model = PPO.load("model/ppo_simple_driving_model")
-    # ========================================================
-    
     # Baseline load (we provided you with an untrained dummy baseline)
-    model = PPO.load("model/ppo_simple_driving_model")
+    # model = PPO.load("model/ppo_simple_driving_model", env=env)
 
     print("Loading environment with rendering enabled...")
     env = gym.make("SimpleDriving-v0", renders=True, isDiscrete=False, reward_callback=custom_reward, observation_callback=custom_observation)
-    model.set_env(env)
+    model = PPO.load("ppo_car", env=env)
 
     scenarios = ["midpoint", "none", "random_pos"]
     print(f"Starting evaluation covering the {len(scenarios)} required obstacle scenarios...")

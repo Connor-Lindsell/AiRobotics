@@ -65,12 +65,12 @@ def custom_observation(client, car_pos, car_orn, goal_pos, goal_orn, obstacle_po
     ]
 
     # Print Debug Info
-    print("\n======= Custom Observation Debug Info =======\n")
-    print(f"Car Pos: {car_pos}, Car Orientation: {car_orn}")
-    print(f"Goal Pos: {goal_pos}, Goal Orientation: {goal_orn}")
-    print(f"Obstacle Pos: {obstacle_pos}, Has Obstacle: {has_obstacle}")
-    print(f"Computed Observation: {observation}\n")
-    print("\n============================================\n")
+    # print("\n======= Custom Observation Debug Info =======\n")
+    # print(f"Car Pos: {car_pos}, Car Orientation: {car_orn}")
+    # print(f"Goal Pos: {goal_pos}, Goal Orientation: {goal_orn}")
+    # print(f"Obstacle Pos: {obstacle_pos}, Has Obstacle: {has_obstacle}")
+    # print(f"Computed Observation: {observation}\n")
+    # print("\n============================================\n")
 
     return observation
 
@@ -91,7 +91,7 @@ def custom_reward(car_pos, goal_pos, obstacle_pos, has_obstacle, prev_dist_to_go
     Returns:
         float: The exact mathematical reward for this timestep.
     """
-    
+
     # 1. Step penalty every frame — encourages urgency, punishes spinning in circles
     reward = STEP_PENALTY
 
@@ -132,28 +132,21 @@ if __name__ == "__main__":
         vec_env_kwargs={"start_method": "spawn"}
     )
 
-    # ========================================================
-    # TODO: Implement PPO using stable_baselines3!
-    # 1. Instantiate the PPO agent ("MlpPolicy")
-    #    HINT: SB3's default PPO parameters are optimized for long tasks. 
-    #    For our short driving environment, training will be painfully slow
-    #    unless you override these hyperparameters during instantiation:
-    #      - learning_rate=0.0003
-    #      - n_steps=512
-    #      - batch_size=256
-    #      - ent_coef=0.01
-    #    You can play around with different parameters, change the number of
-    #    TOTAL_TIMESTEPS, learning_rate, etc.
-    # 2. Tell the agent to log metrics to a local tensorboard directory.
-    # 3. Call agent.learn(total_timesteps=TOTAL_TIMESTEPS)
-    # 4. Save the agent when done
-    # 
-    # Optional: to speed up the training and avoiding to start from scratch every time, 
-    # you can reload previously trained models 
-    # (look up Curriculum Learning/Transfer Learning to learn more about this)
-    # 
-    # If you do, keep track of the previous reward function you used for the VIVA 
-    # (or retrain from scratch to make sure your function works properly)
-    # ========================================================
-    
-    print("Dummy script - Implement PPO here.")
+    # Instantiate PPO with hyperparameters tuned for our short driving episodes
+    model = PPO(
+        "MlpPolicy",
+        env,
+        learning_rate=0.0003,
+        n_steps=512,
+        batch_size=256,
+        ent_coef=0.01,
+        tensorboard_log="./ppo_tensorboard/",
+        verbose=1,
+    )
+
+    # Train the agent
+    model.learn(total_timesteps=TOTAL_TIMESTEPS)
+
+    # Save the trained model
+    model.save("ppo_car")
+    print("Training complete. Model saved to ppo_car.zip")
