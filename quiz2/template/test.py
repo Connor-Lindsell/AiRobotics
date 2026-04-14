@@ -13,7 +13,7 @@ def test_policy():
 
     print("Loading environment with rendering enabled...")
     env = gym.make("SimpleDriving-v0", renders=True, isDiscrete=False, reward_callback=custom_reward, observation_callback=custom_observation)
-    model = PPO.load("ppo_car", env=env)
+    model = PPO.load("model/ppo_car_latest", env=env)
 
     scenarios = ["midpoint", "none", "random_pos"]
     print(f"Starting evaluation covering the {len(scenarios)} required obstacle scenarios...")

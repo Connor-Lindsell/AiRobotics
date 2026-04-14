@@ -1,0 +1,23 @@
+================================================
+Run v1  |  2026-04-14 (initial run)
+
+  -- Results --
+  total_timesteps      : 75776
+  ep_rew_mean          : 103.0
+  ep_len_mean          : 29.2
+
+  -- Reward Config --
+  GOAL_REWARD          : 100.0
+  OBSTACLE_PENALTY     : -50.0
+  STEP_PENALTY         : -0.05
+  PROGRESS_REWARD_SCALE: 2.0
+  MINIMUM_SAFE_DISTANCE: 1.0
+
+  -- PPO Hyperparameters --
+  TOTAL_TIMESTEPS      : 75000
+  N_ENVS               : 4
+  learning_rate        : 0.0003
+  n_steps              : 512
+  batch_size           : 256
+  ent_coef             : 0.01
+================================================

@@ -19,6 +19,10 @@ STEP_PENALTY = -0.05
 PROGRESS_REWARD_SCALE = 2.0
 MINIMUM_SAFE_DISTANCE = 1.0
 
+MODEL_DIR  = "model"
+MODEL_NAME = "ppo_car"
+LOG_FILE   = "training_log.txt"
+
 def custom_observation(client, car_pos, car_orn, goal_pos, goal_orn, obstacle_pos, has_obstacle):
     """
     Computes the observation array for the neural network.
@@ -113,6 +117,43 @@ def custom_reward(car_pos, goal_pos, obstacle_pos, has_obstacle, prev_dist_to_go
 
     return reward
 
+def get_next_version():
+    """Find the next version number for model saving."""
+    os.makedirs(MODEL_DIR, exist_ok=True)
+    v = 1
+    while os.path.exists(f"{MODEL_DIR}/{MODEL_NAME}_v{v}.zip"):
+        v += 1
+    return v
+
+def save_training_log(version, model, total_timesteps):
+    """Append a training run summary to training_log.txt."""
+    from datetime import datetime
+    import numpy as np
+    buf = model.ep_info_buffer
+    ep_rew = round(float(np.mean([e['r'] for e in buf])), 2) if buf else "N/A"
+    ep_len = round(float(np.mean([e['l'] for e in buf])), 2) if buf else "N/A"
+    with open(LOG_FILE, "a") as f:
+        f.write(f"\n{'='*48}\n")
+        f.write(f"Run v{version}  |  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"\n  -- Results --\n")
+        f.write(f"  total_timesteps      : {total_timesteps}\n")
+        f.write(f"  ep_rew_mean          : {ep_rew}\n")
+        f.write(f"  ep_len_mean          : {ep_len}\n")
+        f.write(f"\n  -- Reward Config --\n")
+        f.write(f"  GOAL_REWARD          : {GOAL_REWARD}\n")
+        f.write(f"  OBSTACLE_PENALTY     : {OBSTACLE_PENALTY}\n")
+        f.write(f"  STEP_PENALTY         : {STEP_PENALTY}\n")
+        f.write(f"  PROGRESS_REWARD_SCALE: {PROGRESS_REWARD_SCALE}\n")
+        f.write(f"  MINIMUM_SAFE_DISTANCE: {MINIMUM_SAFE_DISTANCE}\n")
+        f.write(f"\n  -- PPO Hyperparameters --\n")
+        f.write(f"  TOTAL_TIMESTEPS      : {TOTAL_TIMESTEPS}\n")
+        f.write(f"  N_ENVS               : {N_ENVS}\n")
+        f.write(f"  learning_rate        : {model.learning_rate}\n")
+        f.write(f"  n_steps              : {model.n_steps}\n")
+        f.write(f"  batch_size           : {model.batch_size}\n")
+        f.write(f"  ent_coef             : {model.ent_coef}\n")
+        f.write(f"{'='*48}\n")
+
 # You can change these variables for more training steps or if you have a powerful CPU:
 TOTAL_TIMESTEPS = 75000      # define the number of steps used during the training
 N_ENVS = 4                   # number of processor core used for multithreading
@@ -132,21 +173,33 @@ if __name__ == "__main__":
         vec_env_kwargs={"start_method": "spawn"}
     )
 
-    # Instantiate PPO with hyperparameters tuned for our short driving episodes
-    model = PPO(
-        "MlpPolicy",
-        env,
-        learning_rate=0.0003,
-        n_steps=512,
-        batch_size=256,
-        ent_coef=0.01,
-        tensorboard_log="./ppo_tensorboard/",
-        verbose=1,
-    )
+    # Load latest model if one exists (curriculum learning), otherwise train from scratch
+    latest = f"{MODEL_DIR}/{MODEL_NAME}_latest"
+    if os.path.exists(latest + ".zip"):
+        print(f"Resuming from {latest}.zip ...")
+        model = PPO.load(latest, env=env, tensorboard_log="./ppo_tensorboard/")
+    else:
+        print("No previous model found — training from scratch.")
+        model = PPO(
+            "MlpPolicy",
+            env,
+            learning_rate=0.0003,
+            n_steps=512,
+            batch_size=256,
+            ent_coef=0.01,
+            tensorboard_log="./ppo_tensorboard/",
+            verbose=1,
+        )
 
-    # Train the agent
-    model.learn(total_timesteps=TOTAL_TIMESTEPS)
+    # Train — reset_num_timesteps=False keeps the step counter continuous across runs
+    model.learn(total_timesteps=TOTAL_TIMESTEPS, reset_num_timesteps=False)
 
-    # Save the trained model
-    model.save("ppo_car")
-    print("Training complete. Model saved to ppo_car.zip")
+    # Save versioned copy + overwrite latest
+    version   = get_next_version()
+    versioned = f"{MODEL_DIR}/{MODEL_NAME}_v{version}"
+    latest    = f"{MODEL_DIR}/{MODEL_NAME}_latest"
+    model.save(versioned)
+    model.save(latest)
+    save_training_log(version, model, model.num_timesteps)
+    print(f"Saved  ->  {versioned}.zip  +  {latest}.zip")
+    print(f"Log    ->  {LOG_FILE}")
