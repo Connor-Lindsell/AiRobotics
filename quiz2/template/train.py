@@ -41,18 +41,18 @@ def custom_observation(client, car_pos, car_orn, goal_pos, goal_orn, obstacle_po
     Returns:
         list of float: The computed observation state array.
     """
-    # Step 1: Invert the car's world transform to get the world → car-frame transform
+    # Invert the car's world transform to get the world > car-frame transform
     inv_car_pos, inv_car_orn = client.invertTransform(car_pos, car_orn)
 
-    # Step 2: Express the goal position in the car's local frame
+    # Express the goal position in the car's local frame
     goal_rel_pos, _ = client.multiplyTransforms(
         inv_car_pos, inv_car_orn,
-        goal_pos, [0, 0, 0, 1]  # identity orientation — we only care about position
+        goal_pos, [0, 0, 0, 1]  # only care about position
     )
 
-    # Step 3: Express the obstacle position in the car's local frame (or pad with zeros)
+    # Express the obstacle position in the car's local frame
     if has_obstacle and obstacle_pos is not None:
-        obs_world = [obstacle_pos[0], obstacle_pos[1], 0.0]  # promote (x,y) → (x,y,z)
+        obs_world = [obstacle_pos[0], obstacle_pos[1], 0.0]  # promote (x,y) > (x,y,z)
         obs_rel_pos, _ = client.multiplyTransforms(
             inv_car_pos, inv_car_orn,
             obs_world, [0, 0, 0, 1]
@@ -61,7 +61,6 @@ def custom_observation(client, car_pos, car_orn, goal_pos, goal_orn, obstacle_po
     else:
         obs_x, obs_y = 0.0, 0.0
 
-    # Step 4: Pack into a flat size-5 array
     observation = [
         goal_rel_pos[0],      # goal X relative to car
         goal_rel_pos[1],      # goal Y relative to car
@@ -98,22 +97,22 @@ def custom_reward(car_pos, goal_pos, obstacle_pos, has_obstacle, prev_dist_to_go
         float: The exact mathematical reward for this timestep.
     """
 
-    # 1. Step penalty every frame — encourages urgency, punishes spinning in circles
+    # Step penalty every frame > encourages urgency, punishes spinning in circles
     reward = STEP_PENALTY
 
-    # 2. Progress reward — asymmetric: drifting away penalised 1.5× harder than closing in is rewarded.
+    # Progress reward > encourages moving towards the goal
     progress = prev_dist_to_goal - dist_to_goal
     if progress >= 0:
         reward += progress * PROGRESS_REWARD_SCALE
 
-    # 3. Dense proximity bonus — reward being CLOSE to goal at every step, not just at termination.
+    # Dense proximity bonus > reward being CLOSE to goal at every step, not just at termination.
     reward += PROXIMITY_SCALE / (dist_to_goal + 1.0)
 
-    # 4. Large bonus for reaching the goal
+    # 4. Goal reward
     if reached_goal:
         reward += GOAL_REWARD
 
-    # 5. Obstacle collision penalty — triggered when the car enters the danger radius
+    # 5. Obstacle collision penalty > heavily punish colliding with the obstacle, encourages learning to steer around it
     if has_obstacle and obstacle_pos is not None:
         dist_to_obstacle = math.sqrt(
             (car_pos[0] - obstacle_pos[0]) ** 2 +
@@ -125,7 +124,6 @@ def custom_reward(car_pos, goal_pos, obstacle_pos, has_obstacle, prev_dist_to_go
         # Penalty for to close to obstacle (but not colliding) — encourages learning to steer around it rather than just crashing through
         proximity_zone = MINIMUM_SAFE_DISTANCE * OBSTACLE_PROXIMITY_SCALE
         if dist_to_obstacle < proximity_zone:
-            # Linear scale: 0 penalty at zone edge, 0.5 * OBSTACLE_PENALTY at collision boundary
             penetration = (proximity_zone - dist_to_obstacle) / (proximity_zone - MINIMUM_SAFE_DISTANCE)
             reward += OBSTACLE_PENALTY * 0.5 * penetration
 
@@ -150,29 +148,28 @@ def save_training_log(version, model, total_timesteps):
         f.write(f"\n{'='*48}\n")
         f.write(f"Run v{version}  |  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"\n  -- Results --\n")
-        f.write(f"  total_timesteps      : {total_timesteps}\n")
-        f.write(f"  ep_rew_mean          : {ep_rew}\n")
-        f.write(f"  ep_len_mean          : {ep_len}\n")
+        f.write(f"  total_timesteps         : {total_timesteps}\n")
+        f.write(f"  ep_rew_mean             : {ep_rew}\n")
+        f.write(f"  ep_len_mean             : {ep_len}\n")
         f.write(f"\n  -- Reward Config --\n")
-        f.write(f"  GOAL_REWARD          : {GOAL_REWARD}\n")
-        f.write(f"  OBSTACLE_PENALTY     : {OBSTACLE_PENALTY}\n")
-        f.write(f"  STEP_PENALTY         : {STEP_PENALTY}\n")
-        f.write(f"  PROGRESS_REWARD_SCALE: {PROGRESS_REWARD_SCALE}\n")
-        f.write(f"  MINIMUM_SAFE_DISTANCE: {MINIMUM_SAFE_DISTANCE}\n")
-        f.write(f"  PROXIMITY_SCALE      : {PROXIMITY_SCALE}\n")
+        f.write(f"  GOAL_REWARD             : {GOAL_REWARD}\n")
+        f.write(f"  OBSTACLE_PENALTY        : {OBSTACLE_PENALTY}\n")
+        f.write(f"  STEP_PENALTY            : {STEP_PENALTY}\n")
+        f.write(f"  PROGRESS_REWARD_SCALE   : {PROGRESS_REWARD_SCALE}\n")
+        f.write(f"  MINIMUM_SAFE_DISTANCE   : {MINIMUM_SAFE_DISTANCE}\n")
+        f.write(f"  PROXIMITY_SCALE         : {PROXIMITY_SCALE}\n")
         f.write(f"  OBSTACLE_PROXIMITY_SCALE: {OBSTACLE_PROXIMITY_SCALE}\n")
         f.write(f"\n  -- PPO Hyperparameters --\n")
-        f.write(f"  TOTAL_TIMESTEPS      : {TOTAL_TIMESTEPS}\n")
-        f.write(f"  N_ENVS               : {N_ENVS}\n")
-        f.write(f"  learning_rate        : {model.learning_rate}\n")
-        f.write(f"  n_steps              : {model.n_steps}\n")
-        f.write(f"  batch_size           : {model.batch_size}\n")
-        f.write(f"  ent_coef             : {model.ent_coef}\n")
+        f.write(f"  TOTAL_TIMESTEPS         : {TOTAL_TIMESTEPS}\n")
+        f.write(f"  N_ENVS                  : {N_ENVS}\n")
+        f.write(f"  learning_rate           : {model.learning_rate}\n")
+        f.write(f"  n_steps                 : {model.n_steps}\n")
+        f.write(f"  batch_size              : {model.batch_size}\n")
+        f.write(f"  ent_coef                : {model.ent_coef}\n")
         f.write(f"{'='*48}\n")
 
-# You can change these variables for more training steps or if you have a powerful CPU:
-TOTAL_TIMESTEPS = 100000      # define the number of steps used during the training
-N_ENVS = 4                   # number of processor core used for multithreading
+TOTAL_TIMESTEPS = 100000     
+N_ENVS = 4                   
 
 if __name__ == "__main__":
     env_kwargs = {
@@ -199,10 +196,10 @@ if __name__ == "__main__":
         model = PPO(
             "MlpPolicy",
             env,
-            learning_rate = 0.0003,  #
+            learning_rate = 0.0003,  
             n_steps = 512,          
             batch_size = 256,
-            ent_coef = 0.01,        # was 0.005 — less random action noise in steering
+            ent_coef = 0.01,        
             tensorboard_log = "./ppo_tensorboard/",
             verbose = 1,
         )
