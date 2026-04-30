@@ -19,7 +19,7 @@ STEP_PENALTY = -2.0
 PROGRESS_REWARD_SCALE = 10.0
 MINIMUM_SAFE_DISTANCE = 1.0
 PROXIMITY_SCALE          = 0.25 
-OBSTACLE_PROXIMITY_SCALE = 3.5
+OBSTACLE_PROXIMITY_SCALE = 2.0  
 
 MODEL_DIR  = "model"
 MODEL_NAME = "ppo_car"
@@ -121,14 +121,11 @@ def custom_reward(car_pos, goal_pos, obstacle_pos, has_obstacle, prev_dist_to_go
         if dist_to_obstacle < MINIMUM_SAFE_DISTANCE:
             reward += OBSTACLE_PENALTY
     
-        # Quadratic proximity penalty — near-zero at zone edge, very steep near collision boundary.
-        # Outside the zone: no penalty, car can route freely toward the goal.
-        # Inside the zone: each step deeper is exponentially more costly, deterring approach
-        # from any direction (forward or reverse) without blocking legitimate goal paths.
+        # Penalty for to close to obstacle (but not colliding) — encourages learning to steer around it rather than just crashing through
         proximity_zone = MINIMUM_SAFE_DISTANCE * OBSTACLE_PROXIMITY_SCALE
-        if dist_to_obstacle < proximity_zone and dist_to_obstacle >= MINIMUM_SAFE_DISTANCE:
+        if dist_to_obstacle < proximity_zone:
             penetration = (proximity_zone - dist_to_obstacle) / (proximity_zone - MINIMUM_SAFE_DISTANCE)
-            reward += OBSTACLE_PENALTY * 0.6 * (penetration ** 2)
+            reward += OBSTACLE_PENALTY * 0.5 * penetration
 
     return reward
 
