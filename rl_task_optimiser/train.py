@@ -60,7 +60,7 @@ WORD_COMPLETE_BONUS      =  200.0
 # train.py. The script auto-resumes from the latest checkpoint so learned weights
 # transfer across stages. Stage definitions (n_objects, pose_noise_std) live in
 # env/wordle_env.py: CURRICULUM_STAGES.
-CURRICULUM_STAGE = 1
+CURRICULUM_STAGE = 2
 
 # ============================================================
 # Robot arm home position
