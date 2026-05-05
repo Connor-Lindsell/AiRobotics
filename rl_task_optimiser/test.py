@@ -468,7 +468,7 @@ def visualise_episode(
     save_path = os.path.join(LOGS_DIR, f"{scenario_name}_visualisation.png")
     plt.savefig(save_path, dpi=150)
     print(f"Figure saved -> {save_path}")
-    plt.show()
+    plt.close()
 
 
 # ============================================================

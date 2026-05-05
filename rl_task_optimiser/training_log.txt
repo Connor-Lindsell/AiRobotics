@@ -1,0 +1,24 @@
+
+================================================
+Run v1  |  2026-05-05 16:19:08  |  Stage 1
+
+  -- Results --
+  total_timesteps         : 100352
+  ep_rew_mean             : 249.05
+  ep_len_mean             : 1.0
+
+  -- Reward Config --
+  TIME_COST_SCALE         : -1.0
+  CORRECT_PLACEMENT_BONUS : 50.0
+  WRONG_PLACEMENT_PENALTY : -100.0
+  WORD_COMPLETE_BONUS     : 200.0
+  CURRICULUM_STAGE        : 1
+
+  -- PPO Hyperparameters --
+  TOTAL_TIMESTEPS         : 100352
+  N_ENVS                  : 1
+  learning_rate           : 0.0003
+  n_steps                 : 2048
+  batch_size              : 64
+  ent_coef                : 0.01
+================================================
