@@ -5,61 +5,82 @@ from sb3_contrib import MaskablePPO
 from stable_baselines3.common.callbacks import CheckpointCallback
 
 # ============================================================
-# Hyperparameters
+# PPO Hyperparameters
 # ============================================================
+# Total environment steps per training run. Later curriculum stages typically need
+# more steps to converge — increase if mean episode reward has not plateaued.
 TOTAL_TIMESTEPS = 100_000
+
+# Adam optimizer step size. 3e-4 is a reliable default for MaskablePPO on discrete tasks.
+# Lower values slow convergence but reduce the risk of a gradient update destabilising
+# an already-good policy.
 LEARNING_RATE   = 3e-4
+
+# Steps collected per environment before each gradient update. Larger values produce
+# more stable gradient estimates at the cost of slower iteration — the policy is only
+# updated once per N_STEPS environment interactions.
 N_STEPS         = 2048
+
+# Minibatch size used during the gradient update phase. Must divide N_STEPS evenly.
+# Smaller batches add gradient noise (a regularising effect); larger batches give
+# smoother updates but can converge to sharper minima.
 BATCH_SIZE      = 64
+
+# Save a checkpoint every SAVE_FREQ environment steps so training can be recovered
+# if a run diverges or is interrupted.
 SAVE_FREQ       = 10_000
 
 # ============================================================
-# Reward Function Configuration Parameters  (mirrors quiz2 pattern)
+# Reward shaping parameters
 # ============================================================
-# Motion cost multiplier — applied to estimated Euclidean distance (metres).
-# Negative value means moving further costs more reward.
-# TODO: Tune once real workspace geometry is confirmed.
+# Per-step motion cost multiplier applied to total Euclidean distance travelled (metres).
+# reward += TIME_COST_SCALE * (dist(home → object) + dist(object → slot))
+# More negative values push the agent toward shorter paths. Zero disables motion cost.
 TIME_COST_SCALE          = -1.0
 
-# Terminal reward for placing a letter in the CORRECT slot.
+# Reward for placing a letter in the correct slot. Must be large enough to outweigh
+# the expected cumulative motion cost of a successful episode, otherwise the agent
+# may prefer ending episodes early via a wrong placement.
 CORRECT_PLACEMENT_BONUS  =  50.0
 
-# Terminal penalty for placing a letter in the WRONG slot (ends episode).
+# Penalty applied when a letter is placed in the wrong slot; also terminates the episode.
+# Should exceed the maximum possible motion cost across a full episode so that the
+# agent never finds a wrong placement preferable to continued correct play.
 WRONG_PLACEMENT_PENALTY  = -100.0
 
-# Bonus added when ALL slots are filled correctly (word complete).
+# Additional terminal bonus awarded when all five slots are filled correctly.
+# Provides a strong completion signal on top of the final per-letter bonus, encouraging
+# the agent to finish the whole word rather than stopping after early correct placements.
 WORD_COMPLETE_BONUS      =  200.0
 
 # ============================================================
-# Curriculum control
+# Curriculum stage
 # ============================================================
-# Set to the stage currently being trained (1–4).
-# Advance manually between runs — bump this constant and re-run train.py.
-# Each run resumes from the _latest checkpoint via the resume logic below.
-# Stage definitions live in env/wordle_env.py: CURRICULUM_STAGES.
-# TODO: Optionally implement an auto-advance callback that monitors
-#   mean episode reward and advances the stage when it crosses a threshold.
+# Active stage (1–4). Advance manually between runs: bump this constant and re-run
+# train.py. The script auto-resumes from the latest checkpoint so learned weights
+# transfer across stages. Stage definitions (n_objects, pose_noise_std) live in
+# env/wordle_env.py: CURRICULUM_STAGES.
 CURRICULUM_STAGE = 1
 
 # ============================================================
-# Arm home position (robot base frame, metres)
+# Robot arm home position
 # ============================================================
-# Used by custom_reward() to estimate motion cost from home to first object.
-# TODO: Replace with the actual UR3e home/ready joint config projected into
-#   the workspace plane (z=0 slice of the TCP position).
+# (x, y) in metres, robot base frame. Used by custom_reward() to compute the motion
+# cost component for each pick — the arm is assumed to start here at the beginning
+# of every episode and after each placement.
 ARM_HOME_POS = (0.0, 0.0)
 
 # ============================================================
-# Versioned saving and logging  (mirrors quiz2 pattern)
+# Model and log paths
 # ============================================================
 MODEL_DIR  = "models"
 MODEL_NAME = "wordle_ppo"
 LOGS_DIR   = "logs"
 LOG_FILE   = "training_log.txt"
 
-# MaskablePPO action-masking works cleanly with a single env or DummyVecEnv.
-# SubprocVecEnv serialises the env into a subprocess, making action_masks()
-# harder to call. Set N_ENVS=1 for now; investigate DummyVecEnv if parallelism needed.
+# MaskablePPO requires action_masks() to be called on the env during rollout
+# collection. A single env works cleanly; SubprocVecEnv serialises the env into a
+# subprocess, making action_masks() harder to call.
 N_ENVS = 1
 
 
@@ -68,32 +89,29 @@ N_ENVS = 1
 # ============================================================
 def custom_observation(object_poses, object_letters, slot_occupied, placed_letters, target_word):
     """
-    Build the flat float32 observation vector for the neural network.
+    Build the flat float32 observation vector fed to the policy network.
 
-    Injected into WordleEnv as observation_callback — mirrors quiz2's
-    observation_callback injection pattern.
+    Injected into WordleEnv as observation_callback so reward and observation logic
+    can be iterated in train.py without modifying the environment class.
 
     Args:
-        object_poses    (np.ndarray): shape (n_objects, 2) — (x, y) per remaining object
-        object_letters  (list[str]):  letter identity per object, length n_objects
-        slot_occupied   (np.ndarray): bool array, shape (WORD_LENGTH,)
-        placed_letters  (list[str|None]): placed letter per slot, None if empty
-        target_word     (str):        5-letter target word
+        object_poses    (np.ndarray): shape (n_objects, 2) — (x, y) per remaining object, metres
+        object_letters  (list[str]):  uppercase letter identity per object, length n_objects
+        slot_occupied   (np.ndarray): bool array, shape (WORD_LENGTH,) — True if slot is filled
+        placed_letters  (list[str|None]): placed letter per slot, None if slot is empty
+        target_word     (str):        5-letter uppercase target word
 
     Returns:
-        np.ndarray: flat float32 observation vector of length OBS_DIM (25)
+        np.ndarray: flat float32 vector of length OBS_DIM (25)
 
-    TODO: Import WORKSPACE_X_MIN/MAX, WORKSPACE_Y_MIN/MAX, MAX_OBJECTS, WORD_LENGTH, OBS_DIM
-      from env.wordle_env for normalisation bounds and sizing.
-
-    TODO: Build flat vector with this layout (matches WordleEnv._compute_obs() fallback):
-        Positions 0–14: [x_norm_i, y_norm_i, letter_enc_i] for i in 0..MAX_OBJECTS-1
-            x_norm = (x - WORKSPACE_X_MIN) / (WORKSPACE_X_MAX - WORKSPACE_X_MIN)
-            y_norm = (y - WORKSPACE_Y_MIN) / (WORKSPACE_Y_MAX - WORKSPACE_Y_MIN)
-            letter_enc = (ord(letter) - ord('A')) / 25.0
-            Absent objects (index >= n_objects) left as 0.0 (already zeroed)
-        Positions 15–19: slot_occupied as float32 (0.0 = empty, 1.0 = filled)
-        Positions 20–24: (ord(target_word[i]) - ord('A')) / 25.0 per slot
+    Vector layout (25 floats total):
+        [0  – 14] Object block — 3 floats per object slot (5 slots × 3):
+                    x_norm  = (x - WORKSPACE_X_MIN) / (WORKSPACE_X_MAX - WORKSPACE_X_MIN)
+                    y_norm  = (y - WORKSPACE_Y_MIN) / (WORKSPACE_Y_MAX - WORKSPACE_Y_MIN)
+                    l_enc   = (ord(letter) - ord('A')) / 25.0
+                  Unused object slots (index >= n_objects) are left as 0.0.
+        [15 – 19] Slot occupancy — slot_occupied cast to float32 (0.0 empty, 1.0 filled)
+        [20 – 24] Target encoding — (ord(target_word[i]) - ord('A')) / 25.0 per slot
     """
     from env.wordle_env import (
         OBS_DIM, MAX_OBJECTS, WORD_LENGTH,
@@ -126,38 +144,31 @@ def custom_reward(
     """
     Compute the scalar reward for a single pick-and-place action.
 
-    Injected into WordleEnv as reward_callback — mirrors quiz2's
-    reward_callback injection pattern.
+    Injected into WordleEnv as reward_callback. Adjusting the constants at the top
+    of this file (TIME_COST_SCALE, CORRECT_PLACEMENT_BONUS, etc.) reshapes the
+    reward signal without touching the environment class.
 
     Args:
-        object_letter (str):          letter of the object just picked
+        object_letter (str):          uppercase letter of the object just picked
         target_letter (str):          correct letter for the target slot (target_word[slot_idx])
-        object_pose   (tuple[float]): (x, y) position of the picked object (metres)
-        slot_pose     (tuple[float]): (x, y) position of the target slot (metres, from SLOT_POSITIONS)
+        object_pose   (tuple[float]): (x, y) position of the picked object, metres
+        slot_pose     (tuple[float]): (x, y) position of the target slot, metres
         step_count    (int):          current step index in the episode (0-based)
         is_terminal   (bool):         True if this action ends the episode
         word_complete (bool):         True if all WORD_LENGTH slots are now correctly filled
 
     Returns:
-        float: scalar reward
+        float: scalar reward for this step
 
-    Reward formula:
-        1. Motion cost (every step):
-               reward += TIME_COST_SCALE * (dist(ARM_HOME_POS, object_pose) + dist(object_pose, slot_pose))
-           For step_count > 0 the arm starts from the previous slot, not ARM_HOME_POS.
-           TODO: Track last_slot_pose in the env and pass it through the callback,
-                 or adjust the formula to always use ARM_HOME_POS as a simplification.
-
-        2. Correct placement (is_terminal and object_letter == target_letter):
-               reward += CORRECT_PLACEMENT_BONUS
-
-        3. Wrong placement (is_terminal and object_letter != target_letter):
-               reward += WRONG_PLACEMENT_PENALTY
-           Large negative to discourage random/lazy placement.
-
-        4. Word complete (word_complete):
-               reward += WORD_COMPLETE_BONUS
-           Stacked on top of the final correct-placement bonus.
+    Reward components (all applied additively):
+        Motion cost (every step):
+            TIME_COST_SCALE * (dist(ARM_HOME_POS → object_pose) + dist(object_pose → slot_pose))
+        Correct placement (is_terminal and object_letter == target_letter):
+            + CORRECT_PLACEMENT_BONUS
+        Wrong placement (is_terminal and object_letter != target_letter):
+            + WRONG_PLACEMENT_PENALTY
+        Word complete (word_complete):
+            + WORD_COMPLETE_BONUS  (stacked on top of the final correct-placement bonus)
     """
     reward = 0.0
 
@@ -178,10 +189,10 @@ def custom_reward(
 
 
 # ============================================================
-# Versioned model saving helpers  (mirrors quiz2 pattern)
+# Versioned model saving helpers
 # ============================================================
 def get_next_version() -> int:
-    """Find the next unused version number for model saving."""
+    """Return the lowest unused version number, scanning MODEL_DIR for existing saves."""
     os.makedirs(MODEL_DIR, exist_ok=True)
     v = 1
     while os.path.exists(os.path.join(MODEL_DIR, f"{MODEL_NAME}_v{v}.zip")):
@@ -193,8 +204,15 @@ def save_training_log(version, model, total_timesteps, curriculum_stage):
     """
     Append a training run summary to LOG_FILE.
 
-    Mirrors quiz2's save_training_log() exactly — same section structure,
-    same ep_info_buffer extraction pattern.
+    Extracts mean episode reward and length from model.ep_info_buffer (the ring buffer
+    of recent completed episodes maintained by SB3 during learn()). If the buffer is
+    empty (e.g. no episode completed in this run), fields are logged as "N/A".
+
+    Args:
+        version          (int):        version number assigned to this run's saved model
+        model            (MaskablePPO): trained model instance
+        total_timesteps  (int):        cumulative timesteps at end of this run
+        curriculum_stage (int):        CURRICULUM_STAGE value used for this run
     """
     from datetime import datetime
     buf    = model.ep_info_buffer
@@ -229,11 +247,13 @@ def save_training_log(version, model, total_timesteps, curriculum_stage):
 # ============================================================
 def make_env():
     """
-    Create a WordleEnv instance with callback injection.
+    Instantiate WordleEnv with the reward and observation callbacks from this file.
 
-    Mirrors quiz2's env_kwargs pattern — reward and observation logic is
-    injected as callbacks, keeping the env class and training script decoupled.
-    This allows reward shaping to be iterated in train.py without touching the env.
+    Keeping callbacks in train.py decouples reward shaping from the environment class —
+    reward design can be iterated here without modifying env/wordle_env.py.
+
+    Returns:
+        WordleEnv configured for CURRICULUM_STAGE with custom_reward and custom_observation.
     """
     from env.wordle_env import WordleEnv
     return WordleEnv(
@@ -252,12 +272,10 @@ if __name__ == "__main__":
 
     env = make_env()
 
-    # --- Resume from latest checkpoint if one exists (curriculum training) ---
-    # Mirrors quiz2's resume-from-latest pattern exactly.
-    # Workflow for advancing curriculum stages:
-    #   1. Bump CURRICULUM_STAGE above.
-    #   2. Re-run train.py — the previous stage's _latest save is loaded
-    #      and training continues from the same TensorBoard step counter.
+    # Resume from the latest checkpoint if one exists. This is the intended workflow
+    # for advancing curriculum stages: bump CURRICULUM_STAGE above and re-run —
+    # the previous stage's weights are loaded and training continues from the same
+    # TensorBoard step counter (reset_num_timesteps=False below).
     latest_path = os.path.join(MODEL_DIR, f"{MODEL_NAME}_latest")
     if os.path.exists(latest_path + ".zip"):
         print(f"Resuming from {latest_path}.zip  (Stage {CURRICULUM_STAGE}) ...")
@@ -270,28 +288,26 @@ if __name__ == "__main__":
             learning_rate   = LEARNING_RATE,
             n_steps         = N_STEPS,
             batch_size      = BATCH_SIZE,
-            ent_coef        = 0.01,
+            ent_coef        = 0.01,   # entropy bonus coefficient — encourages exploration
             tensorboard_log = LOGS_DIR,
             verbose         = 1,
         )
 
-    # --- Checkpoint callback ---
     checkpoint_callback = CheckpointCallback(
         save_freq   = SAVE_FREQ,
         save_path   = MODEL_DIR,
         name_prefix = MODEL_NAME,
     )
 
-    # --- Train ---
-    # reset_num_timesteps=False keeps the TensorBoard step counter continuous
-    # across curriculum stage transitions — matches quiz2 behaviour.
+    # reset_num_timesteps=False keeps the TensorBoard x-axis continuous across
+    # curriculum stage transitions so all runs appear on the same chart.
     model.learn(
         total_timesteps     = TOTAL_TIMESTEPS,
         callback            = checkpoint_callback,
         reset_num_timesteps = False,
     )
 
-    # --- Versioned save + overwrite _latest (mirrors quiz2) ---
+    # Write a versioned archive and overwrite _latest so the next run resumes here.
     version = get_next_version()
     model.save(os.path.join(MODEL_DIR, f"{MODEL_NAME}_v{version}"))
     model.save(latest_path)
