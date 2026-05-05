@@ -95,19 +95,20 @@ def custom_observation(object_poses, object_letters, slot_occupied, placed_lette
         Positions 15–19: slot_occupied as float32 (0.0 = empty, 1.0 = filled)
         Positions 20–24: (ord(target_word[i]) - ord('A')) / 25.0 per slot
     """
-    # TODO: from env.wordle_env import OBS_DIM, MAX_OBJECTS, WORD_LENGTH
-    # TODO:   WORKSPACE_X_MIN, WORKSPACE_X_MAX, WORKSPACE_Y_MIN, WORKSPACE_Y_MAX
-    # TODO: obs = np.zeros(OBS_DIM, dtype=np.float32)
-    # TODO: for i, (pose, letter) in enumerate(zip(object_poses, object_letters)):
-    #           x_norm = (pose[0] - WORKSPACE_X_MIN) / (WORKSPACE_X_MAX - WORKSPACE_X_MIN)
-    #           y_norm = (pose[1] - WORKSPACE_Y_MIN) / (WORKSPACE_Y_MAX - WORKSPACE_Y_MIN)
-    #           l_enc  = (ord(letter) - ord('A')) / 25.0
-    #           obs[i*3 : i*3+3] = [x_norm, y_norm, l_enc]
-    # TODO: obs[MAX_OBJECTS*3 : MAX_OBJECTS*3 + WORD_LENGTH] = slot_occupied.astype(np.float32)
-    # TODO: for j, letter in enumerate(target_word):
-    #           obs[MAX_OBJECTS*3 + WORD_LENGTH + j] = (ord(letter) - ord('A')) / 25.0
-    # TODO: return obs
-    raise NotImplementedError("custom_observation not yet implemented — see TODO above")
+    from env.wordle_env import (
+        OBS_DIM, MAX_OBJECTS, WORD_LENGTH,
+        WORKSPACE_X_MIN, WORKSPACE_X_MAX, WORKSPACE_Y_MIN, WORKSPACE_Y_MAX,
+    )
+    obs = np.zeros(OBS_DIM, dtype=np.float32)
+    for i, (pose, letter) in enumerate(zip(object_poses, object_letters)):
+        x_norm = (pose[0] - WORKSPACE_X_MIN) / (WORKSPACE_X_MAX - WORKSPACE_X_MIN)
+        y_norm = (pose[1] - WORKSPACE_Y_MIN) / (WORKSPACE_Y_MAX - WORKSPACE_Y_MIN)
+        l_enc  = (ord(letter) - ord('A')) / 25.0
+        obs[i*3 : i*3+3] = [x_norm, y_norm, l_enc]
+    obs[MAX_OBJECTS*3 : MAX_OBJECTS*3 + WORD_LENGTH] = slot_occupied.astype(np.float32)
+    for j, letter in enumerate(target_word):
+        obs[MAX_OBJECTS*3 + WORD_LENGTH + j] = (ord(letter) - ord('A')) / 25.0
+    return obs
 
 
 # ============================================================
@@ -160,21 +161,20 @@ def custom_reward(
     """
     reward = 0.0
 
-    # TODO: dist_home_to_obj = math.sqrt((object_pose[0] - ARM_HOME_POS[0])**2 +
-    #                                     (object_pose[1] - ARM_HOME_POS[1])**2)
-    # TODO: dist_obj_to_slot = math.sqrt((slot_pose[0]   - object_pose[0])**2 +
-    #                                     (slot_pose[1]   - object_pose[1])**2)
-    # TODO: reward += TIME_COST_SCALE * (dist_home_to_obj + dist_obj_to_slot)
+    dist_home_to_obj = math.sqrt((object_pose[0] - ARM_HOME_POS[0])**2 +
+                                  (object_pose[1] - ARM_HOME_POS[1])**2)
+    dist_obj_to_slot = math.sqrt((slot_pose[0]   - object_pose[0])**2 +
+                                  (slot_pose[1]   - object_pose[1])**2)
+    reward += TIME_COST_SCALE * (dist_home_to_obj + dist_obj_to_slot)
 
-    # TODO: if is_terminal and object_letter == target_letter:
-    #           reward += CORRECT_PLACEMENT_BONUS
-    # TODO: elif is_terminal and object_letter != target_letter:
-    #           reward += WRONG_PLACEMENT_PENALTY
-    # TODO: if word_complete:
-    #           reward += WORD_COMPLETE_BONUS
+    if is_terminal and object_letter == target_letter:
+        reward += CORRECT_PLACEMENT_BONUS
+    elif is_terminal and object_letter != target_letter:
+        reward += WRONG_PLACEMENT_PENALTY
+    if word_complete:
+        reward += WORD_COMPLETE_BONUS
 
-    raise NotImplementedError("custom_reward not yet implemented — see TODO above")
-    return reward  # noqa: unreachable — remove once TODO is implemented
+    return reward
 
 
 # ============================================================
@@ -201,29 +201,27 @@ def save_training_log(version, model, total_timesteps, curriculum_stage):
     ep_rew = round(float(np.mean([e["r"] for e in buf])), 2) if buf else "N/A"
     ep_len = round(float(np.mean([e["l"] for e in buf])), 2) if buf else "N/A"
 
-    # TODO: Uncomment and implement once training is functional:
-    # with open(LOG_FILE, "a") as f:
-    #     f.write(f"\n{'='*48}\n")
-    #     f.write(f"Run v{version}  |  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  Stage {curriculum_stage}\n")
-    #     f.write(f"\n  -- Results --\n")
-    #     f.write(f"  total_timesteps         : {total_timesteps}\n")
-    #     f.write(f"  ep_rew_mean             : {ep_rew}\n")
-    #     f.write(f"  ep_len_mean             : {ep_len}\n")
-    #     f.write(f"\n  -- Reward Config --\n")
-    #     f.write(f"  TIME_COST_SCALE         : {TIME_COST_SCALE}\n")
-    #     f.write(f"  CORRECT_PLACEMENT_BONUS : {CORRECT_PLACEMENT_BONUS}\n")
-    #     f.write(f"  WRONG_PLACEMENT_PENALTY : {WRONG_PLACEMENT_PENALTY}\n")
-    #     f.write(f"  WORD_COMPLETE_BONUS     : {WORD_COMPLETE_BONUS}\n")
-    #     f.write(f"  CURRICULUM_STAGE        : {curriculum_stage}\n")
-    #     f.write(f"\n  -- PPO Hyperparameters --\n")
-    #     f.write(f"  TOTAL_TIMESTEPS         : {total_timesteps}\n")
-    #     f.write(f"  N_ENVS                  : {N_ENVS}\n")
-    #     f.write(f"  learning_rate           : {model.learning_rate}\n")
-    #     f.write(f"  n_steps                 : {model.n_steps}\n")
-    #     f.write(f"  batch_size              : {model.batch_size}\n")
-    #     f.write(f"  ent_coef                : {model.ent_coef}\n")
-    #     f.write(f"{'='*48}\n")
-    raise NotImplementedError("save_training_log not yet implemented — uncomment block above")
+    with open(LOG_FILE, "a") as f:
+        f.write(f"\n{'='*48}\n")
+        f.write(f"Run v{version}  |  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  |  Stage {curriculum_stage}\n")
+        f.write(f"\n  -- Results --\n")
+        f.write(f"  total_timesteps         : {total_timesteps}\n")
+        f.write(f"  ep_rew_mean             : {ep_rew}\n")
+        f.write(f"  ep_len_mean             : {ep_len}\n")
+        f.write(f"\n  -- Reward Config --\n")
+        f.write(f"  TIME_COST_SCALE         : {TIME_COST_SCALE}\n")
+        f.write(f"  CORRECT_PLACEMENT_BONUS : {CORRECT_PLACEMENT_BONUS}\n")
+        f.write(f"  WRONG_PLACEMENT_PENALTY : {WRONG_PLACEMENT_PENALTY}\n")
+        f.write(f"  WORD_COMPLETE_BONUS     : {WORD_COMPLETE_BONUS}\n")
+        f.write(f"  CURRICULUM_STAGE        : {curriculum_stage}\n")
+        f.write(f"\n  -- PPO Hyperparameters --\n")
+        f.write(f"  TOTAL_TIMESTEPS         : {total_timesteps}\n")
+        f.write(f"  N_ENVS                  : {N_ENVS}\n")
+        f.write(f"  learning_rate           : {model.learning_rate}\n")
+        f.write(f"  n_steps                 : {model.n_steps}\n")
+        f.write(f"  batch_size              : {model.batch_size}\n")
+        f.write(f"  ent_coef                : {model.ent_coef}\n")
+        f.write(f"{'='*48}\n")
 
 
 # ============================================================
@@ -238,12 +236,11 @@ def make_env():
     This allows reward shaping to be iterated in train.py without touching the env.
     """
     from env.wordle_env import WordleEnv
-    # TODO: return WordleEnv(
-    #     stage                = CURRICULUM_STAGE,
-    #     reward_callback      = custom_reward,
-    #     observation_callback = custom_observation,
-    # )
-    raise NotImplementedError("make_env() not yet wired to WordleEnv — see TODO above")
+    return WordleEnv(
+        stage                = CURRICULUM_STAGE,
+        reward_callback      = custom_reward,
+        observation_callback = custom_observation,
+    )
 
 
 # ============================================================
@@ -264,21 +261,19 @@ if __name__ == "__main__":
     latest_path = os.path.join(MODEL_DIR, f"{MODEL_NAME}_latest")
     if os.path.exists(latest_path + ".zip"):
         print(f"Resuming from {latest_path}.zip  (Stage {CURRICULUM_STAGE}) ...")
-        # TODO: model = MaskablePPO.load(latest_path, env=env, tensorboard_log=LOGS_DIR)
-        raise NotImplementedError("Resume-from-latest not yet implemented — see TODO above")
+        model = MaskablePPO.load(latest_path, env=env, tensorboard_log=LOGS_DIR)
     else:
         print(f"No previous model found — training from scratch (Stage {CURRICULUM_STAGE}).")
-        # TODO: model = MaskablePPO(
-        #     "MlpPolicy",
-        #     env,
-        #     learning_rate   = LEARNING_RATE,
-        #     n_steps         = N_STEPS,
-        #     batch_size      = BATCH_SIZE,
-        #     ent_coef        = 0.01,
-        #     tensorboard_log = LOGS_DIR,
-        #     verbose         = 1,
-        # )
-        raise NotImplementedError("Fresh MaskablePPO construction not yet implemented — see TODO above")
+        model = MaskablePPO(
+            "MlpPolicy",
+            env,
+            learning_rate   = LEARNING_RATE,
+            n_steps         = N_STEPS,
+            batch_size      = BATCH_SIZE,
+            ent_coef        = 0.01,
+            tensorboard_log = LOGS_DIR,
+            verbose         = 1,
+        )
 
     # --- Checkpoint callback ---
     checkpoint_callback = CheckpointCallback(
@@ -290,16 +285,16 @@ if __name__ == "__main__":
     # --- Train ---
     # reset_num_timesteps=False keeps the TensorBoard step counter continuous
     # across curriculum stage transitions — matches quiz2 behaviour.
-    # TODO: model.learn(
-    #     total_timesteps     = TOTAL_TIMESTEPS,
-    #     callback            = checkpoint_callback,
-    #     reset_num_timesteps = False,
-    # )
+    model.learn(
+        total_timesteps     = TOTAL_TIMESTEPS,
+        callback            = checkpoint_callback,
+        reset_num_timesteps = False,
+    )
 
     # --- Versioned save + overwrite _latest (mirrors quiz2) ---
-    # TODO: version = get_next_version()
-    # TODO: model.save(os.path.join(MODEL_DIR, f"{MODEL_NAME}_v{version}"))
-    # TODO: model.save(latest_path)
-    # TODO: save_training_log(version, model, model.num_timesteps, CURRICULUM_STAGE)
-    # TODO: print(f"Saved  ->  {MODEL_DIR}/{MODEL_NAME}_v{{version}}.zip  +  {latest_path}.zip")
-    # TODO: print(f"Log    ->  {LOG_FILE}")
+    version = get_next_version()
+    model.save(os.path.join(MODEL_DIR, f"{MODEL_NAME}_v{version}"))
+    model.save(latest_path)
+    save_training_log(version, model, model.num_timesteps, CURRICULUM_STAGE)
+    print(f"Saved  ->  {MODEL_DIR}/{MODEL_NAME}_v{version}.zip  +  {latest_path}.zip")
+    print(f"Log    ->  {LOG_FILE}")

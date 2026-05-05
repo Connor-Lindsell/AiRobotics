@@ -17,7 +17,7 @@ Reinforcement learning module for optimal pick-and-place task sequencing on a UR
 - [Known Constraints & Risks](#known-constraints--risks)
 - [Repository Structure](#repository-structure)
 - [Dependencies](#dependencies)
-- [Usage](#usage)
+- [How to Run](#how-to-run)
 
 ---
 
@@ -128,82 +128,188 @@ ros2 run <package> rl_sequencer_node
 ## Repository Structure
 
 ```
-rl_sequencer/
+rl_task_optimiser/
 ├── env/
-│   ├── wordle_env.py          # Custom gymnasium.Env
-│   └── curriculum.py          # Stage scheduler
-├── training/
-│   ├── train.py               # MaskablePPO training entry point
-│   └── callbacks.py           # Reward/entropy logging
-├── inference/
-│   └── rl_sequencer_node.py   # ROS 2 inference node
-├── eval/
-│   ├── sim_to_real.py         # Gap analysis script
-│   └── baseline_greedy.py     # Nearest-neighbour comparator
-├── models/                    # Saved policy checkpoints
-├── logs/                      # TensorBoard training logs
+│   └── wordle_env.py          # Custom gymnasium.Env — MDP, observation, action masking
+├── models/                    # Saved policy checkpoints (versioned + _latest)
+├── logs/                      # TensorBoard logs + per-scenario visualisation PNGs
+├── train.py                   # MaskablePPO training entry point, reward/obs callbacks
+├── test.py                    # Evaluation loop, greedy baseline, matplotlib visualisation
 └── README.md
 ```
-
-> *Structure subject to change as implementation progresses.*
 
 ---
 
 ## Dependencies
 
+All dependencies are pure Python — no ROS 2 required to train or evaluate. ROS 2 (Humble or later) is only needed to run the inference node at deployment time.
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `Python` | ≥ 3.9 | Runtime |
+| `gymnasium` | ≥ 0.29 | Environment base class |
+| `stable-baselines3` | ≥ 2.3 | PPO implementation, callbacks |
+| `sb3-contrib` | ≥ 2.3 | `MaskablePPO` (action masking before softmax) |
+| `torch` | ≥ 2.0 | Neural network backend for SB3 |
+| `numpy` | ≥ 1.24 | Observation arrays, pose sampling |
+| `matplotlib` | ≥ 3.7 | Test visualisation (workspace plots, reward curves) |
+
+> `stable-baselines3` and `sb3-contrib` must be the **same minor version** — mismatches cause silent import errors.
+
+### Environment Setup
+
+It is strongly recommended to use a Python virtual environment to avoid dependency conflicts.
+
+**Create and activate a virtual environment:**
+
+Linux / macOS:
 ```bash
-pip install stable-baselines3 sb3-contrib gymnasium torch numpy
+python -m venv venv
+source venv/bin/activate
 ```
 
-ROS 2 (Humble or later) required for the inference node. MoveIt 2 handles all downstream execution — no direct dependency from this module.
-
+Windows:
 ```bash
-# Verify MaskablePPO is available
-python -c "from sb3_contrib import MaskablePPO; print('ok')"
+python -m venv venv
+venv\Scripts\activate
+```
+
+**Install dependencies:**
+
+CPU (all platforms):
+```bash
+pip install gymnasium "stable-baselines3[extra]>=2.3" "sb3-contrib>=2.3" numpy matplotlib
+```
+
+GPU (NVIDIA only) — install PyTorch with CUDA before the rest:
+```bash
+# Check pytorch.org for the exact command matching your CUDA version
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+pip install gymnasium "stable-baselines3[extra]>=2.3" "sb3-contrib>=2.3" numpy matplotlib
+```
+
+**Verify the critical dependency:**
+```bash
+python -c "from sb3_contrib import MaskablePPO; print('MaskablePPO OK')"
 ```
 
 ---
 
-## Environment Setup
+## How to Run
 
-It is highly recommended that you train your model within a Python virtual environment to prevent dependency conflicts.
+### 1. Train the agent
 
-### Step 1: Create a Virtual Environment
+Training runs from `train.py`. The curriculum stage is set by the `CURRICULUM_STAGE` constant at the top of the file (default: `1`).
 
-For Linux / macOS:
+Linux / macOS:
 ```bash
-# Create a virtual environment named "venv"
-python -m venv venv
-
-# Activate the virtual environment
-source venv/bin/activate
+python train.py
 ```
 
-For Windows
-```bash
-# Create a virtual environment named "venv"
-python -m venv venv
-
-# Activate the virtual environment
-venv\Scripts\activate
+Windows:
+```cmd
+python train.py
 ```
 
-### Step 2: Install Dependencies
+On first run this creates `models/` and `logs/` directories. Periodic checkpoints are saved every `SAVE_FREQ` steps; the final model is saved as both a versioned file (`wordle_ppo_v1.zip`) and `wordle_ppo_latest.zip`.
 
-Note that the training on CPU is manageable (you can train your network in 5 to 10 minutes), but if you have an NVIDIA GPU, you can use it to speed up the training.
+**Advancing through curriculum stages:**
 
-**Option A: Standard Installation (CPU only / Mac)**
+1. Open `train.py` and increment `CURRICULUM_STAGE` (e.g. `1` → `2`).
+2. Re-run `python train.py` — the previous stage's `_latest` checkpoint is loaded automatically and training continues from where it left off.
+3. Repeat for stages 3 and 4.
+
+> Stage 4 adds Gaussian pose noise to simulate CNN estimation error. Do not skip it before deploying to the real robot.
+
+**Monitor training with TensorBoard:**
+
+Open a second terminal in the same directory while training is running (or after):
+
+Linux / macOS:
 ```bash
-pip install gymnasium pybullet stable-baselines3[extra] numpy matplotlib
+tensorboard --logdir logs/
 ```
 
-**Option B: training on GPU (NVIDIA only)**
-If you have an NVIDIA card and want faster multi-threaded PPO training, install the CUDA version of PyTorch first, and then install the rest:
-```bash
-# Note: Check the exact PyTorch version for your CUDA toolkit on pytorch.org
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-pip install gymnasium pybullet stable-baselines3[extra] numpy matplotlib
+Windows:
+```cmd
+tensorboard --logdir logs\
 ```
 
+Then open `http://localhost:6006` in a browser. Key metrics: `rollout/ep_rew_mean`, `rollout/ep_len_mean`, `train/entropy_loss`.
+
+If running on a remote machine, expose TensorBoard over the network:
+
+Linux / macOS:
+```bash
+tensorboard --logdir logs/ --host 0.0.0.0
+```
+
+Windows:
+```cmd
+tensorboard --logdir logs\ --host 0.0.0.0
+```
+
+---
+
+### 2. Evaluate the trained policy
+
+Evaluation runs from `test.py`. It loads `models/wordle_ppo_latest.zip`, runs the RL agent and a greedy nearest-neighbour baseline across all named scenarios, prints a per-scenario summary, and saves a 4-panel visualisation PNG to `logs/` for each scenario.
+
+Linux / macOS:
+```bash
+python test.py
+```
+
+Windows:
+```cmd
+python test.py
+```
+
+**Example output:**
+```
+Loading saved MaskablePPO model...
+Starting evaluation across 4 scenarios...
+
+--- Scenario 1: STAGE1_CLEAN ---
+    Stage 1 — single object, no pose noise
+RL Agent        — Total Reward: 48.31  Steps: 1  Success: ✓
+Greedy Baseline — Total Reward: 47.12  Steps: 1  Success: ✓
+RL vs Greedy delta: +1.19
+Figure saved -> logs/stage1_clean_visualisation.png
+```
+
+Visualisation figures show:
+- **Top row:** 2D workspace map with object positions, slot boxes, and pick-and-place arrows (RL agent left, greedy baseline right)
+- **Bottom left:** Cumulative reward curves for both policies overlaid
+- **Bottom right:** Action sequence timeline — which object was placed in which slot at each step
+
+---
+
+### 3. Quick sanity check (no model required)
+
+To verify the environment runs correctly without a trained model:
+
+Linux / macOS:
+```bash
+python -c "
+from env.wordle_env import WordleEnv
+from train import custom_reward, custom_observation
+env = WordleEnv(stage=1, reward_callback=custom_reward, observation_callback=custom_observation)
+obs, _ = env.reset()
+print('Obs shape:', obs.shape)
+print('Valid actions:', env.action_masks().sum())
+env.render()
+"
+```
+
+Windows:
+```cmd
+python -c "from env.wordle_env import WordleEnv; from train import custom_reward, custom_observation; env = WordleEnv(stage=1, reward_callback=custom_reward, observation_callback=custom_observation); obs, _ = env.reset(); print('Obs shape:', obs.shape); print('Valid actions:', env.action_masks().sum()); env.render()"
+```
+
+Or save the snippet to a file and run it:
+```cmd
+python sanity_check.py
+```
 
 

@@ -10,7 +10,7 @@ from env.wordle_env import (
     SLOT_POSITIONS, WORKSPACE_X_MIN, WORKSPACE_X_MAX,
     WORKSPACE_Y_MIN, WORKSPACE_Y_MAX,
 )
-from train import custom_reward, custom_observation, MODEL_DIR, MODEL_NAME, ARM_HOME_POS
+from train import custom_reward, custom_observation, MODEL_DIR, MODEL_NAME, ARM_HOME_POS, LOGS_DIR
 
 # ============================================================
 # Test configuration
@@ -93,7 +93,38 @@ def run_episode(model, env) -> dict:
               env.placed_letters[i] == env.target_word[i] for i in range(WORD_LENGTH))
     TODO: return dict with all trajectory data
     """
-    raise NotImplementedError("run_episode not yet implemented — see TODO above")
+    obs, _ = env.reset()
+    object_poses   = env.object_poses.copy()
+    object_letters = list(env.object_letters)
+
+    done               = False
+    rewards            = []
+    cumulative_rewards = []
+    cumulative         = 0.0
+
+    while not done:
+        masks           = env.action_masks()
+        action, _       = model.predict(obs, deterministic=True, action_masks=masks)
+        obs, reward, terminated, truncated, _ = env.step(action)
+        rewards.append(reward)
+        cumulative += reward
+        cumulative_rewards.append(cumulative)
+        done = terminated or truncated
+        time.sleep(RENDER_DELAY)
+
+    success = all(env.slot_occupied) and all(
+        env.placed_letters[i] == env.target_word[i] for i in range(WORD_LENGTH)
+    )
+
+    return {
+        "action_history":     env.action_history,
+        "object_poses":       object_poses,
+        "object_letters":     object_letters,
+        "rewards":            rewards,
+        "cumulative_rewards": cumulative_rewards,
+        "target_word":        env.target_word,
+        "success":            success,
+    }
 
 
 def greedy_baseline(env, initial_obs) -> dict:
@@ -126,7 +157,37 @@ def greedy_baseline(env, initial_obs) -> dict:
               done = terminated or truncated
     TODO: return trajectory dict matching run_episode() schema
     """
-    raise NotImplementedError("greedy_baseline not yet implemented — see TODO above")
+    object_poses   = env.object_poses.copy()
+    object_letters = list(env.object_letters)
+
+    done               = False
+    rewards            = []
+    cumulative_rewards = []
+    cumulative         = 0.0
+
+    while not done:
+        masks         = env.action_masks()
+        valid_actions = [i for i, m in enumerate(masks) if m]
+        best_action   = min(valid_actions, key=lambda a: _greedy_cost(a, env))
+        _, reward, terminated, truncated, _ = env.step(best_action)
+        rewards.append(reward)
+        cumulative += reward
+        cumulative_rewards.append(cumulative)
+        done = terminated or truncated
+
+    success = all(env.slot_occupied) and all(
+        env.placed_letters[i] == env.target_word[i] for i in range(WORD_LENGTH)
+    )
+
+    return {
+        "action_history":     env.action_history,
+        "object_poses":       object_poses,
+        "object_letters":     object_letters,
+        "rewards":            rewards,
+        "cumulative_rewards": cumulative_rewards,
+        "target_word":        env.target_word,
+        "success":            success,
+    }
 
 
 def _greedy_cost(action: int, env: WordleEnv) -> float:
@@ -142,7 +203,12 @@ def _greedy_cost(action: int, env: WordleEnv) -> float:
     TODO: return np.linalg.norm(obj_pose - np.array(ARM_HOME_POS)) +
                  np.linalg.norm(obj_pose - np.array(slot_pose))
     """
-    raise NotImplementedError("_greedy_cost not yet implemented — see TODO above")
+    object_idx = action // WORD_LENGTH
+    slot_idx   = action  % WORD_LENGTH
+    obj_pose   = env.object_poses[object_idx]
+    slot_pose  = SLOT_POSITIONS[slot_idx]
+    return (np.linalg.norm(obj_pose - np.array(ARM_HOME_POS)) +
+            np.linalg.norm(obj_pose - np.array(slot_pose)))
 
 
 # ============================================================
@@ -202,7 +268,67 @@ def plot_workspace(ax, trajectory: dict, title: str):
     TODO: ax.set_xlabel("X (m)"); ax.set_ylabel("Y (m)")
     TODO: Add legend: green circle = correct, red circle = wrong/unplaced, blue arrow = action sequence
     """
-    raise NotImplementedError("plot_workspace not yet implemented — see TODO above")
+    target_word    = trajectory["target_word"]
+    object_poses   = trajectory["object_poses"]
+    object_letters = trajectory["object_letters"]
+    action_history = trajectory["action_history"]
+
+    # Determine per-object placement correctness
+    correct_set = {
+        oi for oi, si in action_history
+        if object_letters[oi] == target_word[si]
+    }
+
+    # 1. Object circles
+    for i, (letter, pose) in enumerate(zip(object_letters, object_poses)):
+        color = "green" if i in correct_set else "red"
+        ax.scatter(pose[0], pose[1], s=300, color=color, zorder=3)
+        ax.annotate(letter, (pose[0], pose[1]), ha="center", va="center",
+                    fontweight="bold", color="white", fontsize=9, zorder=4)
+
+    # 2. Target word slots
+    placed_letters = [None] * WORD_LENGTH
+    for oi, si in action_history:
+        placed_letters[si] = object_letters[oi]
+
+    for i, (sx, sy) in enumerate(SLOT_POSITIONS):
+        box = FancyBboxPatch(
+            (sx - 0.04, sy - 0.04), 0.08, 0.08,
+            boxstyle="round,pad=0.005", linewidth=1.5,
+            edgecolor="black", facecolor="lightyellow", zorder=2,
+        )
+        ax.add_patch(box)
+        ax.text(sx, sy, placed_letters[i] or "_", ha="center", va="center",
+                fontsize=10, fontweight="bold", zorder=5)
+        ax.text(sx, sy + 0.06, target_word[i], ha="center", va="bottom",
+                fontsize=7, color="grey", zorder=5)
+
+    # 3. Pick-and-place arrows
+    for step, (oi, si) in enumerate(action_history):
+        obj_pos  = object_poses[oi]
+        slot_pos = SLOT_POSITIONS[si]
+        rad      = 0.2 if step % 2 == 0 else -0.2
+        arrow = FancyArrowPatch(
+            tuple(obj_pos), slot_pos,
+            connectionstyle=f"arc3,rad={rad}",
+            arrowstyle="-|>", color="steelblue", lw=1.5, zorder=3,
+        )
+        ax.add_patch(arrow)
+        mid_x = (obj_pos[0] + slot_pos[0]) / 2
+        mid_y = (obj_pos[1] + slot_pos[1]) / 2
+        ax.text(mid_x, mid_y, str(step + 1), fontsize=8, color="steelblue", zorder=6)
+
+    ax.set_xlim(WORKSPACE_X_MIN - 0.1, WORKSPACE_X_MAX + 0.1)
+    ax.set_ylim(WORKSPACE_Y_MIN - 0.1, WORKSPACE_Y_MAX + 0.1)
+    ax.set_aspect("equal")
+    ax.set_title(title)
+    ax.set_xlabel("X (m)")
+    ax.set_ylabel("Y (m)")
+    ax.legend(handles=[
+        mpatches.Patch(color="green",    label="Correct placement"),
+        mpatches.Patch(color="red",      label="Wrong / unplaced"),
+        mpatches.Patch(color="steelblue", label="Action sequence"),
+    ], loc="upper right", fontsize=8)
 
 
 def plot_action_timeline(ax, trajectory: dict, title: str):
@@ -232,7 +358,22 @@ def plot_action_timeline(ax, trajectory: dict, title: str):
     TODO: ax.set_title(title)
     TODO: Add legend patches: green="Correct", red="Wrong"
     """
-    raise NotImplementedError("plot_action_timeline not yet implemented — see TODO above")
+    for step, (oi, si) in enumerate(trajectory["action_history"]):
+        placed = trajectory["object_letters"][oi]
+        target = trajectory["target_word"][si]
+        color  = "green" if placed == target else "red"
+        ax.barh(si, 1, left=step, color=color, edgecolor="white", height=0.6)
+        ax.text(step + 0.5, si, placed, ha="center", va="center",
+                fontweight="bold", color="white")
+
+    ax.set_yticks(range(WORD_LENGTH))
+    ax.set_yticklabels([f"Slot {i}: {trajectory['target_word'][i]}" for i in range(WORD_LENGTH)])
+    ax.set_xlabel("Step")
+    ax.set_title(title)
+    ax.legend(handles=[
+        mpatches.Patch(color="green", label="Correct"),
+        mpatches.Patch(color="red",   label="Wrong"),
+    ], loc="upper right", fontsize=8)
 
 
 def plot_reward_curve(ax, rl_trajectory: dict, baseline_trajectory: dict, title: str):
@@ -255,7 +396,19 @@ def plot_reward_curve(ax, rl_trajectory: dict, baseline_trajectory: dict, title:
     TODO: ax.set_title(title)
     TODO: ax.legend()
     """
-    raise NotImplementedError("plot_reward_curve not yet implemented — see TODO above")
+    steps_rl   = list(range(1, len(rl_trajectory["cumulative_rewards"]) + 1))
+    steps_base = list(range(1, len(baseline_trajectory["cumulative_rewards"]) + 1))
+
+    ax.plot(steps_rl,   rl_trajectory["cumulative_rewards"],
+            label="RL Agent",        color="steelblue",  marker="o", markersize=4)
+    ax.plot(steps_base, baseline_trajectory["cumulative_rewards"],
+            label="Greedy Baseline", color="darkorange", linestyle="--",
+            marker="x", markersize=4)
+    ax.axhline(0, color="grey", linewidth=0.5, linestyle=":")
+    ax.set_xlabel("Step")
+    ax.set_ylabel("Cumulative Reward")
+    ax.set_title(title)
+    ax.legend()
 
 
 def visualise_episode(
@@ -292,7 +445,30 @@ def visualise_episode(
     TODO: print(f"Figure saved -> {save_path}")
     TODO: plt.show()
     """
-    raise NotImplementedError("visualise_episode not yet implemented — see TODO above")
+    os.makedirs(LOGS_DIR, exist_ok=True)
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    plot_workspace(axes[0, 0], rl_trajectory,       "RL Agent")
+    plot_workspace(axes[0, 1], baseline_trajectory, "Greedy Baseline")
+    plot_reward_curve(axes[1, 0], rl_trajectory, baseline_trajectory, "Cumulative Reward")
+    plot_action_timeline(
+        axes[1, 1], rl_trajectory,
+        f"{scenario_name} — Action Sequence (RL Agent)",
+    )
+
+    rl_tick    = "✓" if rl_trajectory["success"]       else "✗"
+    base_tick  = "✓" if baseline_trajectory["success"] else "✗"
+    fig.suptitle(
+        f"Scenario: {scenario_name}  |  Target: {rl_trajectory['target_word']}  "
+        f"|  RL: {rl_tick}  |  Greedy: {base_tick}",
+        fontsize=13,
+    )
+
+    plt.tight_layout()
+    save_path = os.path.join(LOGS_DIR, f"{scenario_name}_visualisation.png")
+    plt.savefig(save_path, dpi=150)
+    print(f"Figure saved -> {save_path}")
+    plt.show()
 
 
 # ============================================================
@@ -313,11 +489,8 @@ def test_policy():
     The RL vs. greedy delta is the primary task-level performance metric per the README.
     """
     print("Loading saved MaskablePPO model...")
-    # TODO: Load from latest checkpoint:
-    #   latest_path = os.path.join(MODEL_DIR, f"{MODEL_NAME}_latest")
-    #   model = MaskablePPO.load(latest_path)
-    #   Do NOT pass env= here — set_env() is called per scenario below.
-    raise NotImplementedError("Model loading not yet implemented — see TODO above")
+    latest_path = os.path.join(MODEL_DIR, f"{MODEL_NAME}_latest")
+    model = MaskablePPO.load(latest_path)
 
     print(f"Starting evaluation across {len(SCENARIOS)} scenarios...")
 
@@ -331,45 +504,44 @@ def test_policy():
         print(f"    {scenario['description']}")
 
         # --- Build env for this scenario ---
-        # TODO: env = WordleEnv(
-        #     stage                = stage,
-        #     target_word          = word,
-        #     reward_callback      = custom_reward,
-        #     observation_callback = custom_observation,
-        # )
-        # If pose_noise_std differs from the stage default, override env.pose_noise_std here.
-        # TODO: if noise != CURRICULUM_STAGES[stage - 1]["pose_noise_std"]:
-        #           env.pose_noise_std = noise
+        env = WordleEnv(
+            stage                = stage,
+            target_word          = word,
+            reward_callback      = custom_reward,
+            observation_callback = custom_observation,
+        )
+        if noise != CURRICULUM_STAGES[stage - 1]["pose_noise_std"]:
+            env.pose_noise_std = noise
 
-        # TODO: model.set_env(env)  — required so model.predict can call action_masks()
+        model.set_env(env)
 
         # --- RL episode ---
-        # TODO: rl_traj = run_episode(model, env)
+        rl_traj = run_episode(model, env)
 
         # --- Reset to same initial state for greedy baseline ---
-        # Re-reset with the same seed so object poses and target word are identical,
-        # making the RL vs. greedy comparison fair.
-        # TODO: initial_obs, _ = env.reset(
-        #     seed    = 42,
-        #     options = {"target_word": rl_traj["target_word"],
-        #                "poses":       rl_traj["object_poses"]},
-        # )
-        # TODO: base_traj = greedy_baseline(env, initial_obs)
+        initial_obs, _ = env.reset(
+            seed    = 42,
+            options = {
+                "target_word": rl_traj["target_word"],
+                "poses":       rl_traj["object_poses"],
+            },
+        )
+        base_traj = greedy_baseline(env, initial_obs)
 
-        # --- Print summary (mirrors quiz2's per-episode print) ---
-        # TODO: rl_total   = rl_traj["cumulative_rewards"][-1]
-        # TODO: base_total = base_traj["cumulative_rewards"][-1]
-        # TODO: print(f"RL Agent       — Total Reward: {rl_total:.2f}  "
-        #             f"Steps: {len(rl_traj['rewards'])}  "
-        #             f"Success: {'✓' if rl_traj['success'] else '✗'}")
-        # TODO: print(f"Greedy Baseline — Total Reward: {base_total:.2f}  "
-        #             f"Steps: {len(base_traj['rewards'])}  "
-        #             f"Success: {'✓' if base_traj['success'] else '✗'}")
-        # TODO: delta = rl_total - base_total
-        # TODO: print(f"RL vs Greedy delta: {delta:+.2f}")
+        # --- Print summary ---
+        rl_total   = rl_traj["cumulative_rewards"][-1]
+        base_total = base_traj["cumulative_rewards"][-1]
+        print(f"RL Agent        — Total Reward: {rl_total:.2f}  "
+              f"Steps: {len(rl_traj['rewards'])}  "
+              f"Success: {'✓' if rl_traj['success'] else '✗'}")
+        print(f"Greedy Baseline — Total Reward: {base_total:.2f}  "
+              f"Steps: {len(base_traj['rewards'])}  "
+              f"Success: {'✓' if base_traj['success'] else '✗'}")
+        delta = rl_total - base_total
+        print(f"RL vs Greedy delta: {delta:+.2f}")
 
         # --- Visualise ---
-        # TODO: visualise_episode(rl_traj, base_traj, name)
+        visualise_episode(rl_traj, base_traj, name)
 
         # Pause between scenarios — mirrors quiz2's time.sleep() pattern
         time.sleep(0.5)
