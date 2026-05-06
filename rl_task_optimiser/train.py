@@ -113,7 +113,7 @@ def custom_observation(object_poses, object_letters, slot_occupied, placed_lette
         [15 – 19] Slot occupancy — slot_occupied cast to float32 (0.0 empty, 1.0 filled)
         [20 – 24] Target encoding — (ord(target_word[i]) - ord('A')) / 25.0 per slot
     """
-    from env.wordle_env import (
+    from training_env.wordle_env import (
         OBS_DIM, MAX_OBJECTS, WORD_LENGTH,
         WORKSPACE_X_MIN, WORKSPACE_X_MAX, WORKSPACE_Y_MIN, WORKSPACE_Y_MAX,
     )
@@ -255,7 +255,7 @@ def make_env():
     Returns:
         WordleEnv configured for CURRICULUM_STAGE with custom_reward and custom_observation.
     """
-    from env.wordle_env import WordleEnv
+    from training_env.wordle_env import WordleEnv
     return WordleEnv(
         stage                = CURRICULUM_STAGE,
         reward_callback      = custom_reward,

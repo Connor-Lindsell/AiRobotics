@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
 from sb3_contrib import MaskablePPO
-from env.wordle_env import (
+from training_env.wordle_env import (
     WordleEnv, CURRICULUM_STAGES, WORD_LENGTH, MAX_OBJECTS,
     SLOT_POSITIONS, WORKSPACE_X_MIN, WORKSPACE_X_MAX,
     WORKSPACE_Y_MIN, WORKSPACE_Y_MAX,
