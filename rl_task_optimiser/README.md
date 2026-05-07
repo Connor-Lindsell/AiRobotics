@@ -223,31 +223,27 @@ On first run this creates `models/` and `logs/` directories. Periodic checkpoint
 
 **Monitor training with TensorBoard:**
 
-Open a second terminal in the same directory while training is running (or after):
+Open a second terminal in the same directory while training is running (or after).
 
-Linux / macOS:
-```bash
-tensorboard --logdir logs/
-```
-
-Windows:
+**Windows (easiest):** double-click or run the included launcher:
 ```cmd
-tensorboard --logdir logs\
+tensorboard.bat
 ```
 
-Then open `http://localhost:6006` in a browser. Key metrics: `rollout/ep_rew_mean`, `rollout/ep_len_mean`, `train/entropy_loss`.
-
-If running on a remote machine, expose TensorBoard over the network:
-
-Linux / macOS:
-```bash
-tensorboard --logdir logs/ --host 0.0.0.0
-```
-
-Windows:
+**Windows (manual, using the project venv):**
 ```cmd
-tensorboard --logdir logs\ --host 0.0.0.0
+venv\Scripts\tensorboard --logdir logs
 ```
+
+**Linux / macOS:**
+```bash
+./venv/bin/tensorboard --logdir logs/
+```
+
+Then open **http://localhost:6006** in a browser.
+Key metrics: `rollout/ep_rew_mean`, `rollout/ep_len_mean`, `train/entropy_loss`.
+
+> **Note:** Do not use the system-wide `tensorboard` command — it may not be the right version or may not find the logs. Always use the venv's copy as shown above.
 
 ---
 

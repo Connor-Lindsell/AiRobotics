@@ -28,13 +28,13 @@ SAVE_FREQ       = 10_000
 # Completing all required slots dominates travel-distance optimisation.
 # Correctness rewards are at least 20× larger than expected travel penalties.
 
-WORD_COMPLETE_BONUS       = 100.0   # all required_slots correctly filled
-CORRECT_PLACEMENT_BONUS   =  20.0   # per newly correct Wordle slot (once per slot)
-CLEARING_BONUS            =   5.0   # clearing a wrong Wordle letter to staging
-WRONG_SLOT_PENALTY        = -20.0   # letter placed in wrong Wordle slot
-MOVE_CORRECT_OUT_PENALTY  = -10.0   # evicting a correctly-placed letter
+WORD_COMPLETE_BONUS       = 500.0   # all required_slots correctly filled
+CORRECT_PLACEMENT_BONUS   =  200.0   # per newly correct Wordle slot (once per slot)
+CLEARING_BONUS            =   50.0   # clearing a wrong Wordle letter to staging
+WRONG_SLOT_PENALTY        = -100.0   # letter placed in wrong Wordle slot
+MOVE_CORRECT_OUT_PENALTY  = -50.0   # evicting a correctly-placed letter
 STEP_PENALTY              =  -1.0   # per symbolic step
-TRAVEL_COST_SCALE         =  -0.05  # × travel distance (metres) — kept small
+TRAVEL_COST_SCALE         =  -0.5  # × travel distance (metres) — kept small
 
 # ============================================================
 # Curriculum stage

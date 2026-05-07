@@ -1,205 +1,220 @@
 """
-Visual inspection of both environment layouts.
+Visualise the grid-based Wordle environment layout.
 
 Run:
     python visualise_envs.py
 
-Shows both environments side-by-side with:
-  • Board boundary
-  • Robot home circle (radius 1, centred at origin)
-  • Wordle slots (labelled with target-word letters)
-  • Letter objects at their sampled positions
-  • Complex env: U-shaped staging area with all 11 possible positions shown
+Shows a single annotated figure with:
+  • 13×7 grid of 0.75 m cells (board boundary)
+  • Wordle zone (y=2.25, x ∈ [-1.5, 1.5]) — 5 yellow cells
+  • Forbidden staging zone (C4/C5) — 30 salmon-shaded cells
+  • Free staging cells — white
+  • Robot home at (0, 0) — blue circle
+  • Example letter placements from a C3 reset
+  • Dimension annotations and legend
 """
 
 import os
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+import matplotlib.patheffects as pe
 
-from training_env.simple_env import (
-    SimpleWordleEnv,
-    SLOT_POSITIONS,
-    WORKSPACE_X_MIN, WORKSPACE_X_MAX,
-    WORKSPACE_Y_MIN, WORKSPACE_Y_MAX,
-    ROBOT_HOME, ROBOT_RADIUS,
+from training_env.wordle_env import (
+    WordleSequencingEnv,
+    ALL_POSITIONS, N_CELLS, N_WORDLE,
+    WORDLE_CELL_IDS, WORDLE_CELL_IDS_SET, WORDLE_CELL_ID_TO_IDX,
+    FORBIDDEN_STAGING_IDS, OUTER_STAGING_CELLS,
+    WORKSPACE_X_MIN, WORKSPACE_X_MAX, WORKSPACE_Y_MIN, WORKSPACE_Y_MAX,
+    ROBOT_HOME, GRID_CELL, GRID_COLS, GRID_ROWS, ACTION_DIM, OBS_DIM,
 )
-from training_env.complex_env import ComplexWordleEnv, U_SHAPE_POSITIONS
 
 TARGET_WORD = "CRANE"
 SEED        = 42
 
-# ============================================================
-# Dummy callbacks — not needed for visual inspection
-# ============================================================
+_WORDLE_FC    = "#FFFACD"   # light yellow
+_WORDLE_EC    = "#333333"
+_FORBIDDEN_FC = "#FFB3B3"   # light salmon/red
+_FORBIDDEN_EC = "#CC6666"
+_FREE_FC      = "#FFFFFF"
+_FREE_EC      = "#BBBBBB"
+_ROBOT_FC     = "#AED6F1"
+_ROBOT_EC     = "#1A5276"
+_LETTER_FC    = "#E74C3C"   # tomato red
+_BOARD_EC     = "#222222"
+
 
 def _dummy_reward(**_):
     return 0.0
 
-def _dummy_obs(object_poses, object_letters, slot_occupied, placed_letters, target_word):
-    return np.zeros(25, dtype=np.float32)
 
-# ============================================================
-# Drawing helpers
-# ============================================================
+def _draw_grid(ax):
+    for cell_id in range(N_CELLS):
+        x, y = ALL_POSITIONS[cell_id]
+        hw = GRID_CELL / 2
 
-_BOARD_COLOR    = "#D0D3CF"
-_SLOT_COLOR     = "lightyellow"
-_ROBOT_COLOR    = "lightblue"
-_STAGING_COLOR  = "peachpuff"
-_OBJECT_COLOR   = "tomato"
+        if cell_id in WORDLE_CELL_IDS_SET:
+            fc, ec, lw, zorder = _WORDLE_FC, _WORDLE_EC, 2.0, 2
+        elif cell_id in FORBIDDEN_STAGING_IDS:
+            fc, ec, lw, zorder = _FORBIDDEN_FC, _FORBIDDEN_EC, 0.8, 1
+        else:
+            fc, ec, lw, zorder = _FREE_FC, _FREE_EC, 0.5, 1
+
+        ax.add_patch(patches.Rectangle(
+            (x - hw, y - hw), GRID_CELL, GRID_CELL,
+            linewidth=lw, edgecolor=ec, facecolor=fc, zorder=zorder,
+        ))
+
+        # Light (col, row) label in each cell
+        col = cell_id % GRID_COLS
+        row = cell_id // GRID_COLS
+        ax.text(x, y - hw + 0.08, f"{col},{row}",
+                ha="center", va="bottom", fontsize=3.5, color="#AAAAAA", zorder=3)
 
 
-def _draw_board(ax):
+def _draw_board_boundary(ax):
+    hw = GRID_CELL / 2
     ax.add_patch(patches.Rectangle(
-        (WORKSPACE_X_MIN, WORKSPACE_Y_MIN),
-        WORKSPACE_X_MAX - WORKSPACE_X_MIN,
-        WORKSPACE_Y_MAX - WORKSPACE_Y_MIN,
-        linewidth=2, edgecolor="black", facecolor=_BOARD_COLOR, zorder=0,
+        (WORKSPACE_X_MIN - hw, WORKSPACE_Y_MIN - hw),
+        WORKSPACE_X_MAX - WORKSPACE_X_MIN + GRID_CELL,
+        WORKSPACE_Y_MAX - WORKSPACE_Y_MIN + GRID_CELL,
+        linewidth=2.5, edgecolor=_BOARD_EC, facecolor="none", zorder=6,
     ))
+
+
+def _draw_wordle_labels(ax, target_word):
+    for wi, cid in enumerate(WORDLE_CELL_IDS):
+        x, y = ALL_POSITIONS[cid]
+        ax.text(x, y, target_word[wi],
+                ha="center", va="center", fontsize=13, fontweight="bold",
+                color="#222222", zorder=5)
+        ax.text(x, y + GRID_CELL * 0.42, f"W{wi}",
+                ha="center", va="bottom", fontsize=6.5, color="#555555", zorder=5)
 
 
 def _draw_robot_home(ax):
     ax.add_patch(patches.Circle(
-        ROBOT_HOME, ROBOT_RADIUS,
-        linewidth=2, edgecolor="dodgerblue", facecolor=_ROBOT_COLOR, alpha=0.8, zorder=2,
+        (ROBOT_HOME[0], ROBOT_HOME[1]), 0.25,
+        linewidth=2, edgecolor=_ROBOT_EC, facecolor=_ROBOT_FC, alpha=0.95, zorder=7,
     ))
-    ax.text(
-        ROBOT_HOME[0], ROBOT_HOME[1], "HOME\n(0,0)",
-        ha="center", va="center", fontsize=7, zorder=3,
+    ax.text(ROBOT_HOME[0], ROBOT_HOME[1], "⌂",
+            ha="center", va="center", fontsize=11, color=_ROBOT_EC, zorder=8)
+    ax.text(ROBOT_HOME[0], ROBOT_HOME[1] - 0.42, "HOME\n(0,0)",
+            ha="center", va="top", fontsize=6, color=_ROBOT_EC, zorder=8)
+
+
+def _draw_letters(ax, env):
+    for cell_id in range(N_CELLS):
+        if env.position_occupied[cell_id] and cell_id not in WORDLE_CELL_IDS_SET:
+            x, y = ALL_POSITIONS[cell_id]
+            ltr  = env.position_letter[cell_id]
+            ax.add_patch(patches.Circle((x, y), 0.27, color=_LETTER_FC, zorder=9))
+            ax.text(x, y, ltr,
+                    ha="center", va="center", fontsize=10, fontweight="bold",
+                    color="white", zorder=10)
+
+
+def _draw_annotations(ax):
+    hw = GRID_CELL / 2
+
+    # Wordle zone span
+    wx0, wy = ALL_POSITIONS[WORDLE_CELL_IDS[0]]
+    wx1, _  = ALL_POSITIONS[WORDLE_CELL_IDS[-1]]
+    ax.annotate(
+        "", xy=(wx1 + hw, wy + 0.78), xytext=(wx0 - hw, wy + 0.78),
+        arrowprops=dict(arrowstyle="<->", color=_WORDLE_EC, lw=1.3),
+        zorder=11,
     )
+    ax.text((wx0 + wx1) / 2, wy + 0.88,
+            "Wordle zone  x ∈ [−1.5, 1.5],  y = 2.25",
+            ha="center", va="bottom", fontsize=7.5, color=_WORDLE_EC, zorder=11)
+
+    # Forbidden zone brace label
+    ax.text(0, 1.5,
+            "Forbidden staging zone\n(C4 & C5 — no object placement)",
+            ha="center", va="center", fontsize=8, color="#8B0000",
+            fontstyle="italic", zorder=11,
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.7, edgecolor="#CC6666"))
+
+    # Board dimension arrow
+    ax.annotate(
+        "", xy=(WORKSPACE_X_MAX + hw, WORKSPACE_Y_MIN),
+        xytext=(WORKSPACE_X_MIN - hw, WORKSPACE_Y_MIN),
+        arrowprops=dict(arrowstyle="<->", color="#555555", lw=1.0),
+        xycoords="data", textcoords="data",
+    )
+    ax.text(0, WORKSPACE_Y_MIN - 0.55,
+            f"Board x: {WORKSPACE_X_MIN - hw:.2f} → {WORKSPACE_X_MAX + hw:.2f} m  "
+            f"({GRID_COLS} cols × {GRID_CELL} m)",
+            ha="center", va="top", fontsize=7, color="#555555")
+
+    ax.annotate(
+        "", xy=(WORKSPACE_X_MAX + hw + 0.15, WORKSPACE_Y_MAX + hw),
+        xytext=(WORKSPACE_X_MAX + hw + 0.15, WORKSPACE_Y_MIN - hw),
+        arrowprops=dict(arrowstyle="<->", color="#555555", lw=1.0),
+        xycoords="data", textcoords="data",
+    )
+    ax.text(WORKSPACE_X_MAX + hw + 0.25, (WORKSPACE_Y_MIN + WORKSPACE_Y_MAX) / 2,
+            f"y: {WORKSPACE_Y_MIN - hw:.2f}→{WORKSPACE_Y_MAX + hw:.2f}\n({GRID_ROWS} rows)",
+            ha="left", va="center", fontsize=7, color="#555555", rotation=90)
 
 
-def _draw_slots(ax, target_word):
-    for i, (sx, sy) in enumerate(SLOT_POSITIONS):
-        ax.add_patch(patches.FancyBboxPatch(
-            (sx - 0.5, sy - 0.5), 1.0, 1.0,
-            boxstyle="round,pad=0.04",
-            linewidth=2, edgecolor="black", facecolor=_SLOT_COLOR, zorder=2,
-        ))
-        ax.text(sx, sy, target_word[i],
-                ha="center", va="center", fontsize=13, fontweight="bold", zorder=3)
-        ax.text(sx, sy + 0.62, f"S{i}",
-                ha="center", va="bottom", fontsize=7, color="grey", zorder=3)
-
-    # Brace label above the slot cluster
-    mid_x = (SLOT_POSITIONS[0][0] + SLOT_POSITIONS[-1][0]) / 2
-    top_y = SLOT_POSITIONS[0][1] + 1.0
-    ax.text(mid_x, top_y, "Wordle Slots",
-            ha="center", va="bottom", fontsize=8, color="dimgrey",
-            style="italic", zorder=3)
-
-
-def _draw_staging_area(ax):
-    """Draw all 11 U-shape positions as hollow orange squares."""
-    for px, py in U_SHAPE_POSITIONS:
-        ax.add_patch(patches.Rectangle(
-            (px - 0.45, py - 0.45), 0.9, 0.9,
-            linewidth=1.5, edgecolor="darkorange", facecolor=_STAGING_COLOR,
-            alpha=0.85, zorder=1,
-        ))
-
-
-def _draw_objects(ax, env):
-    if env.object_poses is None:
-        return
-    for letter, pos in zip(env.object_letters, env.object_poses):
-        ax.add_patch(patches.Circle(pos, 0.4, color=_OBJECT_COLOR, zorder=4))
-        ax.text(pos[0], pos[1], letter,
-                ha="center", va="center", fontsize=11, fontweight="bold",
-                color="white", zorder=5)
-
-
-def _style_axes(ax, title):
-    ax.set_xlim(WORKSPACE_X_MIN - 1.0, WORKSPACE_X_MAX + 1.0)
-    ax.set_ylim(WORKSPACE_Y_MIN - 1.0, WORKSPACE_Y_MAX + 1.0)
-    ax.set_aspect("equal")
-    ax.set_xlabel("X (m)", fontsize=9)
-    ax.set_ylabel("Y (m)", fontsize=9)
-    ax.set_title(title, fontsize=12, fontweight="bold", pad=8)
-    ax.set_xticks(range(int(WORKSPACE_X_MIN), int(WORKSPACE_X_MAX) + 1, 2))
-    ax.set_yticks(range(int(WORKSPACE_Y_MIN), int(WORKSPACE_Y_MAX) + 1, 2))
-    ax.grid(True, alpha=0.25, linestyle="--")
-
-
-def _add_legend(ax, include_staging=False):
+def _add_legend(ax, n_outer, n_forbidden):
     handles = [
-        patches.Patch(facecolor=_ROBOT_COLOR,  edgecolor="dodgerblue", label="Robot home (r=1)"),
-        patches.Patch(facecolor=_SLOT_COLOR,   edgecolor="black",      label="Wordle slot (1×1 m)"),
-        patches.Patch(facecolor=_OBJECT_COLOR,                          label="Letter object"),
+        patches.Patch(facecolor=_WORDLE_FC,    edgecolor=_WORDLE_EC,    label=f"Wordle slot ({N_WORDLE})"),
+        patches.Patch(facecolor=_FORBIDDEN_FC, edgecolor=_FORBIDDEN_EC, label=f"Forbidden staging zone ({n_forbidden} cells, C4/C5)"),
+        patches.Patch(facecolor=_FREE_FC,      edgecolor=_FREE_EC,      label=f"Free grid cell ({n_outer} staging cells)"),
+        patches.Patch(facecolor=_ROBOT_FC,     edgecolor=_ROBOT_EC,     label="Robot home (0, 0)"),
+        patches.Patch(facecolor=_LETTER_FC,                              label="Letter object (example C3 reset)"),
     ]
-    if include_staging:
-        handles.append(
-            patches.Patch(facecolor=_STAGING_COLOR, edgecolor="darkorange", label="Staging position")
-        )
-    ax.legend(handles=handles, loc="upper right", fontsize=7, framealpha=0.9)
+    ax.legend(handles=handles, loc="upper left", fontsize=8.5, framealpha=0.95,
+              edgecolor="#AAAAAA")
 
-# ============================================================
-# Main
-# ============================================================
+
+def _style_axes(ax):
+    margin_x = 1.5
+    margin_y = 1.0
+    ax.set_xlim(WORKSPACE_X_MIN - margin_x, WORKSPACE_X_MAX + margin_x)
+    ax.set_ylim(WORKSPACE_Y_MIN - margin_y, WORKSPACE_Y_MAX + margin_y)
+    ax.set_aspect("equal")
+    ax.set_xlabel("X (m)", fontsize=10)
+    ax.set_ylabel("Y (m)", fontsize=10)
+    ax.set_xticks(np.arange(WORKSPACE_X_MIN, WORKSPACE_X_MAX + 0.01, GRID_CELL))
+    ax.set_yticks(np.arange(WORKSPACE_Y_MIN, WORKSPACE_Y_MAX + 0.01, GRID_CELL))
+    ax.tick_params(labelsize=7)
+    ax.grid(False)
+
 
 def main():
     os.makedirs("logs", exist_ok=True)
 
-    # Instantiate environments
-    simple_env  = SimpleWordleEnv(
-        stage=3, reward_callback=_dummy_reward,
-        observation_callback=_dummy_obs, target_word=TARGET_WORD,
+    env = WordleSequencingEnv(
+        stage=3, reward_callback=_dummy_reward, target_word=TARGET_WORD,
     )
-    complex_env = ComplexWordleEnv(
-        stage=3, reward_callback=_dummy_reward,
-        observation_callback=_dummy_obs, target_word=TARGET_WORD,
-    )
+    env.reset(seed=SEED)
 
-    simple_env.reset(seed=SEED)
-    complex_env.reset(seed=SEED)
+    n_outer    = len(OUTER_STAGING_CELLS)
+    n_forbidden = len(FORBIDDEN_STAGING_IDS)
 
-    # ── Figure ──
-    fig, (ax_s, ax_c) = plt.subplots(1, 2, figsize=(18, 8))
+    fig, ax = plt.subplots(1, 1, figsize=(16, 11))
     fig.suptitle(
-        f"Environment Layouts  |  Target word: {TARGET_WORD}  |  seed={SEED}",
-        fontsize=13, fontweight="bold",
+        f"Grid-Based Wordle Environment  |  Target: {TARGET_WORD}  |  seed={SEED}\n"
+        f"Grid: {GRID_COLS}×{GRID_ROWS} = {N_CELLS} cells, cell size = {GRID_CELL} m  │  "
+        f"Action space: {N_CELLS}² = {ACTION_DIM}  │  Obs dim: {OBS_DIM}",
+        fontsize=11, fontweight="bold", y=0.99,
     )
 
-    # ── Simple env ──
-    _draw_board(ax_s)
-    _draw_robot_home(ax_s)
-    _draw_slots(ax_s, TARGET_WORD)
-    _draw_objects(ax_s, simple_env)
-    _style_axes(ax_s, "Simple Environment\n(objects scattered in free workspace)")
-    _add_legend(ax_s, include_staging=False)
+    _draw_board_boundary(ax)
+    _draw_grid(ax)
+    _draw_wordle_labels(ax, TARGET_WORD)
+    _draw_robot_home(ax)
+    _draw_letters(ax, env)
+    _draw_annotations(ax)
+    _style_axes(ax)
+    _add_legend(ax, n_outer, n_forbidden)
 
-    # Annotate dimensions
-    ax_s.annotate(
-        "Board: (−10,0)→(10,10)", xy=(0, -0.6), xycoords="data",
-        ha="center", fontsize=7, color="dimgrey",
-    )
-
-    # ── Complex env ──
-    _draw_board(ax_c)
-    _draw_staging_area(ax_c)    # draw U-shape before objects so objects sit on top
-    _draw_robot_home(ax_c)
-    _draw_slots(ax_c, TARGET_WORD)
-    _draw_objects(ax_c, complex_env)
-    _style_axes(ax_c, "Complex Environment\n(objects placed in U-shape staging area, ~3 unit gap)")
-    _add_legend(ax_c, include_staging=True)
-
-    # Annotate gap arrows on complex env
-    ax_c.annotate(
-        "", xy=(-2.0, 3.0), xytext=(-5.0, 3.0),
-        arrowprops=dict(arrowstyle="<->", color="darkorange", lw=1.2),
-    )
-    ax_c.text(-3.5, 3.15, "gap=3", ha="center", fontsize=7, color="darkorange")
-
-    ax_c.annotate(
-        "", xy=(0.0, 3.0), xytext=(0.0, 0.0),
-        arrowprops=dict(arrowstyle="<->", color="darkorange", lw=1.2),
-    )
-    ax_c.text(0.4, 1.5, "gap=3", ha="left", fontsize=7, color="darkorange")
-
-    plt.tight_layout()
-
-    save_path = os.path.join("logs", "environment_layouts.png")
+    plt.tight_layout(rect=[0, 0, 1, 0.97])
+    save_path = os.path.join("logs", "grid_environment_layout.png")
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
     print(f"Saved  ->  {save_path}")
     plt.show()
