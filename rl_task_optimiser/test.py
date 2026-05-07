@@ -19,6 +19,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
+from matplotlib.animation import FuncAnimation, PillowWriter
 from sb3_contrib import MaskablePPO
 
 from training_env.wordle_env import (
@@ -36,6 +37,14 @@ from train import custom_reward, MODEL_DIR, MODEL_NAME, LOGS_DIR
 # Test configuration
 # ============================================================
 RENDER_DELAY = 0.0
+
+# ============================================================
+# Animation configuration
+# ============================================================
+ANIMATE         = True   # set False to skip GIF generation
+ANIM_FPS        = 20     # frames per second in saved GIF
+ANIM_INTERP     = 12     # interpolation frames per path segment (robot→src, src→dst)
+ANIM_HOLD       = 8      # frames to hold on the final board state after each step
 
 SCENARIOS = [
     {
@@ -91,19 +100,35 @@ def run_episode(model, env) -> dict:
 
     done = False
     rewards, cumulative_rewards = [], []
-    cumulative       = 0.0
-    total_travel     = 0.0
+    cumulative        = 0.0
+    total_travel      = 0.0
     all_path_segments = []
+    step_frames       = []
 
     while not done:
         masks          = env.action_masks()
         action, _      = model.predict(obs, deterministic=True, action_masks=masks)
-        obs, reward, terminated, truncated, info = env.step(int(action))
+        action         = int(action)
+        source_id      = action // N_CELLS
+        board_before   = _snapshot_board(env)
+        letter_moved   = env.position_letter[source_id]
+
+        obs, reward, terminated, truncated, info = env.step(action)
         rewards.append(reward)
         cumulative += reward
         cumulative_rewards.append(cumulative)
         total_travel += info["travel_this_step"]
         all_path_segments.append(info.get("path_segments", []))
+        step_frames.append({
+            "source_id":    source_id,
+            "dest_id":      action % N_CELLS,
+            "robot_from":   info["robot_pos_before"],
+            "source_pos":   info["source_pos"],
+            "dest_pos":     info["dest_pos"],
+            "letter":       letter_moved,
+            "board_before": board_before,
+            "board_after":  _snapshot_board(env),
+        })
         done = terminated or truncated
         if RENDER_DELAY > 0:
             time.sleep(RENDER_DELAY)
@@ -124,6 +149,7 @@ def run_episode(model, env) -> dict:
         "required_slots":     set(env.required_slots),
         "stage":              env.stage,
         "path_segments":      all_path_segments,
+        "step_frames":        step_frames,
     }
 
 
@@ -137,17 +163,32 @@ def run_episode_greedy(env) -> dict:
     cumulative        = 0.0
     total_travel      = 0.0
     all_path_segments = []
+    step_frames       = []
 
     while not done:
         masks         = env.action_masks()
         valid_actions = [i for i, m in enumerate(masks) if m]
         best_action   = min(valid_actions, key=lambda a: _greedy_cost(a, env))
+        source_id     = best_action // N_CELLS
+        board_before  = _snapshot_board(env)
+        letter_moved  = env.position_letter[source_id]
+
         _, reward, terminated, truncated, info = env.step(best_action)
         rewards.append(reward)
         cumulative += reward
         cumulative_rewards.append(cumulative)
         total_travel += info["travel_this_step"]
         all_path_segments.append(info.get("path_segments", []))
+        step_frames.append({
+            "source_id":    source_id,
+            "dest_id":      best_action % N_CELLS,
+            "robot_from":   info["robot_pos_before"],
+            "source_pos":   info["source_pos"],
+            "dest_pos":     info["dest_pos"],
+            "letter":       letter_moved,
+            "board_before": board_before,
+            "board_after":  _snapshot_board(env),
+        })
         done = terminated or truncated
 
     return {
@@ -166,6 +207,7 @@ def run_episode_greedy(env) -> dict:
         "required_slots":     set(env.required_slots),
         "stage":              env.stage,
         "path_segments":      all_path_segments,
+        "step_frames":        step_frames,
     }
 
 
@@ -379,6 +421,177 @@ def plot_travel_comparison(ax, rl_results: list[dict], greedy_results: list[dict
     ax.legend(fontsize=8)
 
 
+# ============================================================
+# Animation helpers
+# ============================================================
+
+def _build_animation_frames(traj: dict) -> list[dict]:
+    """
+    Expand a trajectory's step_frames into per-render-frame dicts.
+
+    Each action produces three phases:
+      Phase 1  robot travels from its resting position to the source cell
+               (letter still sitting at source, not yet picked up)
+      Phase 2  robot carries letter from source to destination
+               (letter disappears from source, floats on robot)
+      Hold     board shows final state for ANIM_HOLD frames
+    """
+    frames = []
+    for step_num, step in enumerate(traj["step_frames"], start=1):
+        rf        = np.array(step["robot_from"], dtype=float)
+        sp        = np.array(step["source_pos"],  dtype=float)
+        dp        = np.array(step["dest_pos"],    dtype=float)
+        src_id    = step["source_id"]
+        letter    = step["letter"]
+        bb        = step["board_before"]
+        ba        = step["board_after"]
+
+        # Board with letter removed from source (in-transit state for phase 2)
+        board_transit = {
+            "position_letter":   list(bb["position_letter"]),
+            "position_occupied": bb["position_occupied"].copy(),
+            "wordle_correct":    bb["wordle_correct"].copy(),
+            "target_word":       bb["target_word"],
+            "required_slots":    bb["required_slots"],
+            "robot_pos":         bb["robot_pos"],
+        }
+        board_transit["position_letter"][src_id]   = None
+        board_transit["position_occupied"][src_id] = False
+
+        base = {"step_num": step_num, "total_steps": len(traj["step_frames"])}
+
+        # Phase 1: robot → source
+        for t in np.linspace(0, 1, ANIM_INTERP, endpoint=False):
+            pos = rf + t * (sp - rf)
+            frames.append({**base, "robot_xy": tuple(pos),
+                           "carrying": None, "board": bb})
+
+        # Phase 2: robot carries letter → dest
+        for t in np.linspace(0, 1, ANIM_INTERP, endpoint=False):
+            pos = sp + t * (dp - sp)
+            frames.append({**base, "robot_xy": tuple(pos),
+                           "carrying": letter, "board": board_transit})
+
+        # Hold on final board
+        for _ in range(ANIM_HOLD):
+            frames.append({**base, "robot_xy": tuple(dp),
+                           "carrying": None, "board": ba})
+
+    return frames
+
+
+def _draw_anim_frame(ax, frame: dict, target_word: str, title: str) -> None:
+    """Render a single animation frame onto ax (clears ax first)."""
+    ax.clear()
+    board             = frame["board"]
+    position_letter   = board["position_letter"]
+    position_occupied = board["position_occupied"]
+    wordle_correct    = board["wordle_correct"]
+    rx, ry            = frame["robot_xy"]
+    carrying          = frame["carrying"]
+
+    # Grid dots
+    for cell_id, (px, py) in enumerate(ALL_POSITIONS):
+        color = "#FFB3B3" if cell_id in FORBIDDEN_STAGING_IDS else "#E8E8E8"
+        ax.scatter(px, py, s=18, color=color, zorder=1)
+
+    # Wordle slots
+    for wi, cid in enumerate(WORDLE_CELL_IDS):
+        sx, sy = ALL_POSITIONS[cid]
+        ltr    = position_letter[cid]
+        color  = "lightgreen" if wordle_correct[wi] else ("salmon" if ltr else "lightyellow")
+        ax.add_patch(FancyBboxPatch(
+            (sx - 0.3, sy - 0.3), 0.6, 0.6,
+            boxstyle="round,pad=0.04", linewidth=1.5,
+            edgecolor="black", facecolor=color, zorder=2,
+        ))
+        ax.text(sx, sy, ltr or "_", ha="center", va="center",
+                fontsize=9, fontweight="bold", zorder=5)
+        ax.text(sx, sy + 0.38, target_word[wi], ha="center", va="bottom",
+                fontsize=6, color="grey", zorder=5)
+
+    # Staging letters
+    for cell_id in range(N_CELLS):
+        if cell_id not in WORDLE_CELL_IDS_SET and position_occupied[cell_id]:
+            px, py = ALL_POSITIONS[cell_id]
+            ltr    = position_letter[cell_id]
+            ax.scatter(px, py, s=160, color="steelblue", zorder=3)
+            ax.text(px, py, ltr or "?", ha="center", va="center",
+                    fontsize=7, fontweight="bold", color="white", zorder=4)
+
+    # Robot end-effector — diamond shape, red outline / white fill
+    ax.scatter(rx, ry, s=320, color="crimson", marker="D", zorder=6)
+    ax.scatter(rx, ry, s=130, color="white",   marker="D", zorder=7)
+
+    # Carried letter floats above the robot
+    if carrying:
+        ax.text(rx, ry + 0.32, carrying,
+                ha="center", va="bottom", fontsize=11, fontweight="bold",
+                color="crimson",
+                bbox=dict(boxstyle="round,pad=0.25", facecolor="lightyellow",
+                          edgecolor="crimson", linewidth=1.5, alpha=0.95),
+                zorder=8)
+
+    step_label = (f"step {frame['step_num']}/{frame['total_steps']}"
+                  if "step_num" in frame else "")
+    ax.set_xlim(WORKSPACE_X_MIN - 0.5, WORKSPACE_X_MAX + 0.5)
+    ax.set_ylim(WORKSPACE_Y_MIN - 0.5, WORKSPACE_Y_MAX + 0.5)
+    ax.set_aspect("equal")
+    ax.set_title(f"{title}  [{step_label}]", fontsize=9)
+    ax.set_xlabel("X (m)")
+    ax.set_ylabel("Y (m)")
+    ax.legend(handles=[
+        mpatches.Patch(color="lightgreen",  label="Correct slot"),
+        mpatches.Patch(color="salmon",      label="Wrong slot"),
+        mpatches.Patch(color="steelblue",   label="Staging letter"),
+        mpatches.Patch(color="crimson",     label="Robot EE"),
+    ], loc="upper right", fontsize=6)
+
+
+def animate_episode_pair(rl_traj: dict, greedy_traj: dict,
+                         scenario_name: str, ep: int = 0) -> None:
+    """
+    Build and save a side-by-side GIF of RL vs Greedy for one episode.
+    The shorter trajectory is padded with its last frame so both finish
+    at the same time.
+    """
+    rl_frames     = _build_animation_frames(rl_traj)
+    greedy_frames = _build_animation_frames(greedy_traj)
+
+    max_len = max(len(rl_frames), len(greedy_frames))
+    rl_frames     += [rl_frames[-1]]     * (max_len - len(rl_frames))
+    greedy_frames += [greedy_frames[-1]] * (max_len - len(greedy_frames))
+
+    target = rl_traj["target_word"]
+    rl_suc = "✓" if rl_traj["success"] else "✗"
+    g_suc  = "✓" if greedy_traj["success"] else "✗"
+
+    fig, (ax_rl, ax_g) = plt.subplots(1, 2, figsize=(16, 7))
+    fig.suptitle(
+        f"{scenario_name}  |  target: {target}"
+        f"  |  RL {rl_suc} ({rl_traj['n_steps']} steps,"
+        f" {rl_traj['total_travel']:.2f} m)"
+        f"  |  Greedy {g_suc} ({greedy_traj['n_steps']} steps,"
+        f" {greedy_traj['total_travel']:.2f} m)",
+        fontsize=9,
+    )
+
+    def _update(i):
+        _draw_anim_frame(ax_rl, rl_frames[i],     target, f"RL Agent (ep{ep+1})")
+        _draw_anim_frame(ax_g,  greedy_frames[i], target, f"Greedy Baseline (ep{ep+1})")
+        return []
+
+    anim = FuncAnimation(fig, _update, frames=max_len,
+                         interval=1000 / ANIM_FPS, blit=False)
+
+    os.makedirs(LOGS_DIR, exist_ok=True)
+    save_path = os.path.join(LOGS_DIR, f"{scenario_name}_ep{ep+1}_animation.gif")
+    print(f"  Saving animation ({max_len} frames @ {ANIM_FPS} fps) -> {save_path}")
+    anim.save(save_path, writer=PillowWriter(fps=ANIM_FPS))
+    plt.close()
+    print(f"  Animation saved -> {save_path}")
+
+
 def visualise_scenario(rl_results: list[dict], greedy_results: list[dict], scenario_name: str) -> None:
     """
     Save a 2×2 figure for the scenario:
@@ -470,6 +683,8 @@ def test_policy():
             print_head_to_head(rl_traj, greedy_traj, ep + 1)
 
         visualise_scenario(rl_results, greedy_results, name)
+        if ANIMATE:
+            animate_episode_pair(rl_results[0], greedy_results[0], name, ep=0)
         print_aggregate_comparison(rl_results, greedy_results, name)
 
     print(f"\n{'='*60}\nEvaluation complete.")
