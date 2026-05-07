@@ -439,3 +439,115 @@ Run v5  |  2026-05-07 23:52:10  |  Stage C3
   batch_size              : 64
   ent_coef                : 0.05
 ================================================
+
+================================================
+Run v6  |  2026-05-08 00:39:18  |  Stage C3
+
+  -- Results --
+  total_timesteps         : 702464
+  ep_rew_mean             : 132.89
+  ep_len_mean             : 10.0
+  ep_path_length_mean (m) : 56.56
+
+  -- Reward Config --
+  WORD_COMPLETE_BONUS     : 100.0
+  CORRECT_PLACEMENT_BONUS : 20.0
+  CLEARING_BONUS          : 15.0
+  WRONG_SLOT_PENALTY      : -20.0
+  MOVE_CORRECT_OUT_PENALTY: -10.0
+  STEP_PENALTY            : -1.0
+  TRAVEL_COST_SCALE       : -2.0
+  CURRICULUM_STAGE        : C3
+
+  -- PPO Hyperparameters --
+  TOTAL_TIMESTEPS         : 702464
+  N_ENVS                  : 1
+  learning_rate           : 0.0003
+  n_steps                 : 2048
+  batch_size              : 64
+  ent_coef                : 0.05
+================================================
+
+================================================
+Run v7  |  2026-05-08 00:54:14  |  Stage C3
+
+  -- Results --
+  total_timesteps         : 804864
+  ep_rew_mean             : 121.45
+  ep_len_mean             : 10.0
+  ep_path_length_mean (m) : 53.68
+
+  -- Reward Config --
+  WORD_COMPLETE_BONUS     : 100.0
+  CORRECT_PLACEMENT_BONUS : 20.0
+  CLEARING_BONUS          : 15.0
+  WRONG_SLOT_PENALTY      : -20.0
+  MOVE_CORRECT_OUT_PENALTY: -10.0
+  STEP_PENALTY            : -1.0
+  TRAVEL_COST_SCALE       : -2.0
+  CURRICULUM_STAGE        : C3
+
+  -- PPO Hyperparameters --
+  TOTAL_TIMESTEPS         : 804864
+  N_ENVS                  : 1
+  learning_rate           : 0.0003
+  n_steps                 : 4096
+  batch_size              : 128
+  ent_coef                : 0.01
+================================================
+
+================================================
+Run v8  |  2026-05-08 01:04:02  |  Stage C3
+
+  -- Results --
+  total_timesteps         : 907264
+  ep_rew_mean             : 148.55
+  ep_len_mean             : 10.0
+  ep_path_length_mean (m) : 51.57
+
+  -- Reward Config --
+  WORD_COMPLETE_BONUS     : 100.0
+  CORRECT_PLACEMENT_BONUS : 20.0
+  CLEARING_BONUS          : 15.0
+  WRONG_SLOT_PENALTY      : -20.0
+  MOVE_CORRECT_OUT_PENALTY: -10.0
+  STEP_PENALTY            : -1.0
+  TRAVEL_COST_SCALE       : -2.0
+  CURRICULUM_STAGE        : C3
+
+  -- PPO Hyperparameters --
+  TOTAL_TIMESTEPS         : 907264
+  N_ENVS                  : 1
+  learning_rate           : 0.0003
+  n_steps                 : 4096
+  batch_size              : 128
+  ent_coef                : 0.01
+================================================
+
+================================================
+Run v9  |  2026-05-08 01:12:39  |  Stage C3
+
+  -- Results --
+  total_timesteps         : 1009664
+  ep_rew_mean             : 167.6
+  ep_len_mean             : 10.0
+  ep_path_length_mean (m) : 49.6
+
+  -- Reward Config --
+  WORD_COMPLETE_BONUS     : 100.0
+  CORRECT_PLACEMENT_BONUS : 20.0
+  CLEARING_BONUS          : 15.0
+  WRONG_SLOT_PENALTY      : -20.0
+  MOVE_CORRECT_OUT_PENALTY: -10.0
+  STEP_PENALTY            : -1.0
+  TRAVEL_COST_SCALE       : -2.0
+  CURRICULUM_STAGE        : C3
+
+  -- PPO Hyperparameters --
+  TOTAL_TIMESTEPS         : 1009664
+  N_ENVS                  : 1
+  learning_rate           : 0.0003
+  n_steps                 : 4096
+  batch_size              : 128
+  ent_coef                : 0.01
+================================================

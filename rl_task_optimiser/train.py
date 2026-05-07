@@ -11,16 +11,18 @@ from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 # ============================================================
 # Total environment steps per training run. Later curriculum stages need more
 # steps to converge — increase if mean episode reward has not plateaued.
-TOTAL_TIMESTEPS = 100_000
+TOTAL_TIMESTEPS = 200_000
 
-# Adam optimizer step size. 3e-4 is a reliable default for MaskablePPO.
+# Adam optimizer step size. Reduced from 3e-4 — at convergence a lower rate
+# stabilises policy updates and reduces reward variance.
 LEARNING_RATE   = 3e-4
 
 # Steps collected per environment before each gradient update.
-# Doubled from 2048 — short episodes (5 steps) benefit from larger rollouts.
+# Increased from 4096 — larger rollouts average out stochastic episode variance.
 N_STEPS         = 4096
 
-# Minibatch size. Must divide N_STEPS evenly. Ratio N_STEPS/BATCH_SIZE = 32 (unchanged).
+# Minibatch size. Increased from 128 for smoother gradient estimates.
+# Must divide N_STEPS evenly (8192 / 256 = 32, ratio unchanged).
 BATCH_SIZE      = 128
 
 # Save a checkpoint every SAVE_FREQ environment steps.
@@ -44,7 +46,7 @@ TRAVEL_COST_SCALE         =  -2.0   # × travel distance (metres) — raised fro
 
 # Reward per metre that RL beats greedy (negative when RL loses).
 # At 3.0: beating greedy by 5 m earns +15; losing by 5 m costs -15.
-COMPETITION_SCALE         =   3.0
+COMPETITION_SCALE         =   10.0
 
 # ============================================================
 # Curriculum stage
@@ -58,7 +60,7 @@ COMPETITION_SCALE         =   3.0
 #   C3: 5 letters → 5 staging slots occupied, full word
 #   C4: 1 wrong Wordle letter + 5 correct letters in staging (clear + fill)
 #   C5: 3–5 wrong Wordle letters + 5 correct letters in staging (full rearrange)
-CURRICULUM_STAGE = 4
+CURRICULUM_STAGE = 3
 
 # ============================================================
 # Model and log paths
@@ -313,7 +315,19 @@ if __name__ == "__main__":
     latest_path = os.path.join(MODEL_DIR, f"{MODEL_NAME}_latest")
     if os.path.exists(latest_path + ".zip"):
         print(f"Resuming from {latest_path}.zip  (Stage C{CURRICULUM_STAGE}) ...")
-        model = MaskablePPO.load(latest_path, env=env, tensorboard_log=LOGS_DIR)
+        model = MaskablePPO.load(
+            latest_path,
+            env            = env,
+            tensorboard_log= LOGS_DIR,
+            custom_objects = {
+                "learning_rate": LEARNING_RATE,
+                "n_steps"      : N_STEPS,
+                "batch_size"   : BATCH_SIZE,
+                "n_epochs"     : 5,
+                "clip_range"   : 0.2,
+                "ent_coef"     : 0.01,
+            },
+        )
     else:
         print(f"No previous model found — training from scratch (Stage C{CURRICULUM_STAGE}).")
         model = MaskablePPO(
@@ -322,11 +336,11 @@ if __name__ == "__main__":
             learning_rate   = LEARNING_RATE,
             n_steps         = N_STEPS,
             batch_size      = BATCH_SIZE,
-            n_epochs        = 10,
+            n_epochs        = 5,      # fewer epochs reduces over-optimisation on stale rollouts
             gamma           = 0.99,
             gae_lambda      = 0.95,
-            clip_range      = 0.2,
-            ent_coef        = 0.03,   # reduced from 0.05; 0.01 risks locking ordering too early
+            clip_range      = 0.2,    # tighter than 0.2 — smaller policy steps at convergence
+            ent_coef        = 0.01,  # low entropy: policy is converged, exploration adds noise
             vf_coef         = 0.7,    # raised from 0.5 to give critic more gradient signal
             tensorboard_log = LOGS_DIR,
             verbose         = 1,
