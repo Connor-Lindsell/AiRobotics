@@ -17,11 +17,12 @@ Forbidden staging zone (C4/C5 — non-wordle cells blocked as move destinations)
 Action encoding:
   action = source_cell_id * N_CELLS + dest_cell_id  ∈ Discrete(8281)
 
-Observation (2681 floats):
+Observation (2686 floats):
   [0:2]       robot position (normalised x, y)
   [2:2550]    91 cells × (occupied, one_hot_letter[26], is_correct) = 91×28
-  [2550:2680] target word 5 × one_hot_letter[26] = 130
-  [2680]      stage indicator (stage / 5)
+  [2550:2555] needs_clearing: 5 Wordle slots × 1 (occupied by wrong letter)
+  [2555:2685] target word 5 × one_hot_letter[26] = 130
+  [2685]      stage indicator (stage / 5)
 """
 
 import math
@@ -77,11 +78,14 @@ OUTER_STAGING_CELLS = [i for i in NON_WORDLE_CELLS if i not in FORBIDDEN_STAGING
 
 ACTION_DIM = N_CELLS * N_CELLS   # 8281
 
-_CELL_BLOCK   = N_CELLS * (1 + N_LETTERS + 1)  # 91 × 28 = 2548
-_TARGET_BLOCK = WORD_LENGTH * N_LETTERS          # 5  × 26 = 130
-OBS_DIM = 2 + _CELL_BLOCK + _TARGET_BLOCK + 1   # 2681
+INVALID_ACTION_PENALTY = -50.0
 
-MAX_STEPS_PER_STAGE = {1: 15, 2: 30, 3: 50, 4: 70, 5: 100}
+_CELL_BLOCK            = N_CELLS * (1 + N_LETTERS + 1)  # 91 × 28 = 2548
+_TARGET_BLOCK          = WORD_LENGTH * N_LETTERS          # 5  × 26 = 130
+_NEEDS_CLEARING_BLOCK  = N_WORDLE                         # 5  × 1  = 5
+OBS_DIM = 2 + _CELL_BLOCK + _TARGET_BLOCK + _NEEDS_CLEARING_BLOCK + 1  # 2686
+
+MAX_STEPS_PER_STAGE = {1: 10, 2: 15, 3: 25, 4: 35}
 
 # Backward-compat aliases
 MAX_OBJECTS = 5
@@ -163,7 +167,7 @@ class WordleSequencingEnv(gym.Env):
     ):
         super().__init__()
         if stage not in MAX_STEPS_PER_STAGE:
-            raise ValueError(f"stage must be 1–5, got {stage}")
+            raise ValueError(f"stage must be 1–4, got {stage}")
 
         self.stage     = stage
         self.max_steps = MAX_STEPS_PER_STAGE[stage]
@@ -218,7 +222,6 @@ class WordleSequencingEnv(gym.Env):
             2: self._reset_c2,
             3: self._reset_c3,
             4: self._reset_c4,
-            5: self._reset_c5,
         }
         _reset_dispatch[self.stage]()
 
@@ -234,40 +237,41 @@ class WordleSequencingEnv(gym.Env):
         self.position_occupied[cell_id] = True
 
     def _reset_c1(self) -> None:
-        wi   = random.randint(0, N_WORDLE - 1)
-        cell = random.choice(NON_WORDLE_CELLS)
-        self._place(cell, self.target_word[wi])
-        self.required_slots = {WORDLE_CELL_IDS[wi]}
-
-    def _reset_c2(self) -> None:
-        indices = random.sample(range(N_WORDLE), 3)
-        cells   = random.sample(NON_WORDLE_CELLS, 3)
-        for wi, cell in zip(indices, cells):
-            self._place(cell, self.target_word[wi])
-        self.required_slots = {WORDLE_CELL_IDS[wi] for wi in indices}
-
-    def _reset_c3(self) -> None:
+        # 5 correct letters in random staging, no distractors
         cells = random.sample(NON_WORDLE_CELLS, 5)
         for wi, cell in enumerate(cells):
             self._place(cell, self.target_word[wi])
         self.required_slots = set(WORDLE_CELL_IDS)
 
-    def _reset_c4(self) -> None:
-        blocked_wi = random.randint(0, N_WORDLE - 1)
-        self._place(WORDLE_CELL_IDS[blocked_wi], sample_wrong_letter(self.target_word))
-        cells = random.sample(OUTER_STAGING_CELLS, 5)
-        for wi, cell in enumerate(cells):
+    def _reset_c2(self) -> None:
+        # 5 correct letters + 5 distractors in random staging
+        cells = random.sample(NON_WORDLE_CELLS, 10)
+        for wi, cell in enumerate(cells[:5]):
             self._place(cell, self.target_word[wi])
+        for cell in cells[5:]:
+            self._place(cell, sample_wrong_letter(self.target_word))
         self.required_slots = set(WORDLE_CELL_IDS)
 
-    def _reset_c5(self) -> None:
-        n_blocked   = random.randint(3, 5)
-        blocked_wis = random.sample(range(N_WORDLE), n_blocked)
-        for wi in blocked_wis:
+    def _reset_c3(self) -> None:
+        # All 5 Wordle slots blocked; 5 correct + 10 distractors in outer staging
+        for wi in range(N_WORDLE):
             self._place(WORDLE_CELL_IDS[wi], sample_wrong_letter(self.target_word))
-        cells = random.sample(OUTER_STAGING_CELLS, 5)
-        for wi, cell in enumerate(cells):
+        cells = random.sample(OUTER_STAGING_CELLS, 15)
+        for wi, cell in enumerate(cells[:5]):
             self._place(cell, self.target_word[wi])
+        for cell in cells[5:]:
+            self._place(cell, sample_wrong_letter(self.target_word))
+        self.required_slots = set(WORDLE_CELL_IDS)
+
+    def _reset_c4(self) -> None:
+        # Identical board to C3 — difficulty comes from the loose action mask
+        for wi in range(N_WORDLE):
+            self._place(WORDLE_CELL_IDS[wi], sample_wrong_letter(self.target_word))
+        cells = random.sample(OUTER_STAGING_CELLS, 15)
+        for wi, cell in enumerate(cells[:5]):
+            self._place(cell, self.target_word[wi])
+        for cell in cells[5:]:
+            self._place(cell, sample_wrong_letter(self.target_word))
         self.required_slots = set(WORDLE_CELL_IDS)
 
     # ----------------------------------------------------------
@@ -278,8 +282,20 @@ class WordleSequencingEnv(gym.Env):
         source_id = action // N_CELLS
         dest_id   = action %  N_CELLS
 
-        source_pos   = ALL_POSITIONS[source_id]
-        dest_pos     = ALL_POSITIONS[dest_id]
+        robot_pos_before = self.robot_pos.copy()
+        source_pos       = ALL_POSITIONS[source_id]
+        dest_pos         = ALL_POSITIONS[dest_id]
+
+        # Reject any action the mask would block
+        if not self.action_masks()[action]:
+            self._step_count          += 1
+            self._invalid_action_count += 1
+            terminated = self._step_count >= self.max_steps
+            obs  = self._build_obs()
+            info = self._build_info(0.0, False, terminated,
+                                    robot_pos_before, source_pos, dest_pos, [])
+            return obs, INVALID_ACTION_PENALTY, terminated, False, info
+
         moved_letter = self.position_letter[source_id]
 
         dist = compute_travel(self.robot_pos, source_pos, dest_pos)
@@ -333,8 +349,13 @@ class WordleSequencingEnv(gym.Env):
         if placing_correct and not slot_already_rewarded:
             self.already_rewarded_slots.add(dest_id)
 
+        path_segments = [
+            (tuple(robot_pos_before), source_pos),
+            (source_pos, dest_pos),
+        ]
         obs  = self._build_obs()
-        info = self._build_info(dist, word_complete, terminated)
+        info = self._build_info(dist, word_complete, terminated,
+                                robot_pos_before, source_pos, dest_pos, path_segments)
         return obs, reward, terminated, False, info
 
     # ----------------------------------------------------------
@@ -342,26 +363,61 @@ class WordleSequencingEnv(gym.Env):
     # ----------------------------------------------------------
 
     def action_masks(self) -> np.ndarray:
-        """
-        Block physically impossible moves and, for C4/C5, block placing
-        any object into non-wordle forbidden-zone cells.
-        """
         masks = np.zeros(ACTION_DIM, dtype=bool)
-        for src in range(N_CELLS):
-            if not self.position_occupied[src]:
-                continue
-            if src in WORDLE_CELL_IDS_SET:
-                wi = WORDLE_CELL_ID_TO_IDX[src]
-                if self.wordle_correct[wi]:
+
+        if self.stage <= 2:
+            # C1-C2: tight — only correct letter into correct empty required slot
+            for src in range(N_CELLS):
+                if not self.position_occupied[src]:
                     continue
-            for dst in range(N_CELLS):
-                if dst == src:
+                letter = self.position_letter[src]
+                for dst in self.required_slots:
+                    if dst == src or self.position_occupied[dst]:
+                        continue
+                    if letter == self.target_word[WORDLE_CELL_ID_TO_IDX[dst]]:
+                        masks[src * N_CELLS + dst] = True
+
+        elif self.stage == 3:
+            # C3: semi-constrained
+            #   From Wordle: free clearing to any non-forbidden empty staging cell
+            #   From staging: only correct letter → correct empty Wordle slot
+            for src in range(N_CELLS):
+                if not self.position_occupied[src]:
                     continue
-                if self.position_occupied[dst]:
+                if src in WORDLE_CELL_IDS_SET:
+                    wi = WORDLE_CELL_ID_TO_IDX[src]
+                    if self.wordle_correct[wi]:
+                        continue  # never evict a correctly placed letter
+                    for dst in NON_WORDLE_CELLS:
+                        if self.position_occupied[dst]:
+                            continue
+                        if dst in FORBIDDEN_STAGING_IDS:
+                            continue
+                        masks[src * N_CELLS + dst] = True
+                else:
+                    letter = self.position_letter[src]
+                    for dst in self.required_slots:
+                        if dst == src or self.position_occupied[dst]:
+                            continue
+                        if letter == self.target_word[WORDLE_CELL_ID_TO_IDX[dst]]:
+                            masks[src * N_CELLS + dst] = True
+
+        else:
+            # C4: loose — any move to empty non-forbidden cell, never evict correct letters
+            for src in range(N_CELLS):
+                if not self.position_occupied[src]:
                     continue
-                if self.stage >= 4 and dst in FORBIDDEN_STAGING_IDS:
-                    continue
-                masks[src * N_CELLS + dst] = True
+                if src in WORDLE_CELL_IDS_SET:
+                    wi = WORDLE_CELL_ID_TO_IDX[src]
+                    if self.wordle_correct[wi]:
+                        continue
+                for dst in range(N_CELLS):
+                    if dst == src or self.position_occupied[dst]:
+                        continue
+                    if dst in FORBIDDEN_STAGING_IDS:
+                        continue
+                    masks[src * N_CELLS + dst] = True
+
         return masks
 
     # ----------------------------------------------------------
@@ -381,6 +437,12 @@ class WordleSequencingEnv(gym.Env):
                 wi = WORDLE_CELL_ID_TO_IDX[cell_id]
                 obs[base+27] = float(self.wordle_correct[wi])
             base += 28
+
+        for wi, cid in enumerate(WORDLE_CELL_IDS):
+            obs[base + wi] = float(
+                self.position_occupied[cid] and not self.wordle_correct[wi]
+            )
+        base += N_WORDLE
 
         for ch in self.target_word:
             obs[base:base+26] = one_hot_letter(ch)
@@ -407,7 +469,11 @@ class WordleSequencingEnv(gym.Env):
                 return False
         return True
 
-    def _build_info(self, dist: float, word_complete: bool, terminated: bool) -> dict:
+    def _build_info(self, dist: float, word_complete: bool, terminated: bool,
+                    robot_pos_before: np.ndarray,
+                    source_pos: tuple[float, float],
+                    dest_pos: tuple[float, float],
+                    path_segments: list) -> dict:
         board_str = " | ".join(
             f"W{wi}={self.position_letter[cid] or '?'}"
             + ("✓" if self.wordle_correct[wi] else "")
@@ -427,6 +493,10 @@ class WordleSequencingEnv(gym.Env):
             "cumulative_travel": self._cumulative_travel,
             "invalid_actions":   self._invalid_action_count,
             "board":             board_str,
+            "robot_pos_before":  tuple(float(v) for v in robot_pos_before),
+            "source_pos":        source_pos,
+            "dest_pos":          dest_pos,
+            "path_segments":     path_segments,
         }
 
     # ----------------------------------------------------------

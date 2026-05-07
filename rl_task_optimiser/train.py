@@ -1,7 +1,10 @@
 import os
+from collections import deque
+
+import gymnasium as gym
 import numpy as np
 from sb3_contrib import MaskablePPO
-from stable_baselines3.common.callbacks import CheckpointCallback
+from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 
 # ============================================================
 # PPO Hyperparameters
@@ -14,13 +17,14 @@ TOTAL_TIMESTEPS = 100_000
 LEARNING_RATE   = 3e-4
 
 # Steps collected per environment before each gradient update.
-N_STEPS         = 2048
+# Doubled from 2048 — short episodes (5 steps) benefit from larger rollouts.
+N_STEPS         = 4096
 
-# Minibatch size. Must divide N_STEPS evenly.
-BATCH_SIZE      = 64
+# Minibatch size. Must divide N_STEPS evenly. Ratio N_STEPS/BATCH_SIZE = 32 (unchanged).
+BATCH_SIZE      = 128
 
 # Save a checkpoint every SAVE_FREQ environment steps.
-SAVE_FREQ       = 10_000
+SAVE_FREQ       = 100_000
 
 # ============================================================
 # Reward shaping parameters
@@ -28,13 +32,19 @@ SAVE_FREQ       = 10_000
 # Completing all required slots dominates travel-distance optimisation.
 # Correctness rewards are at least 20× larger than expected travel penalties.
 
-WORD_COMPLETE_BONUS       = 500.0   # all required_slots correctly filled
-CORRECT_PLACEMENT_BONUS   =  200.0   # per newly correct Wordle slot (once per slot)
-CLEARING_BONUS            =   50.0   # clearing a wrong Wordle letter to staging
-WRONG_SLOT_PENALTY        = -100.0   # letter placed in wrong Wordle slot
-MOVE_CORRECT_OUT_PENALTY  = -50.0   # evicting a correctly-placed letter
-STEP_PENALTY              =  -1.0   # per symbolic step
-TRAVEL_COST_SCALE         =  -0.5  # × travel distance (metres) — kept small
+WORD_COMPLETE_BONUS       = 100.0   # all required_slots correctly filled
+CORRECT_PLACEMENT_BONUS   =  20.0   # per newly correct Wordle slot (once per slot)
+CLEARING_BONUS            =  15.0   # clearing a wrong Wordle letter to staging
+WRONG_SLOT_PENALTY        = -20.0   # letter placed in wrong Wordle slot
+MOVE_CORRECT_OUT_PENALTY  = -10.0   # evicting a correctly-placed letter
+STEP_PENALTY              =  -1.0   # per step — C3/C4 have variable step counts so
+                                    # this provides a signal to complete efficiently
+TRAVEL_COST_SCALE         =  -2.0   # × travel distance (metres) — raised from -0.5 so
+                                    # travel cost is ~24% of episode reward (was ~7%)
+
+# Reward per metre that RL beats greedy (negative when RL loses).
+# At 3.0: beating greedy by 5 m earns +15; losing by 5 m costs -15.
+COMPETITION_SCALE         =   3.0
 
 # ============================================================
 # Curriculum stage
@@ -60,6 +70,109 @@ LOG_FILE   = "training_log.txt"
 
 # MaskablePPO requires action_masks() to be called synchronously on the env.
 N_ENVS = 1
+
+
+# ============================================================
+# Path length tracking callback
+# ============================================================
+class PathLengthCallback(BaseCallback):
+    """
+    Tracks cumulative_travel (metres) per episode and exposes ep_path_length_mean.
+
+    SB3's built-in ep_info_buffer only captures 'r' and 'l'. This callback
+    reads info["cumulative_travel"] from the env at episode end and maintains
+    its own rolling buffer of the same size so the metric can be logged and
+    compared to ep_len_mean.
+    """
+
+    def __init__(self, buffer_size: int = 100):
+        super().__init__()
+        self._path_buffer: deque[float] = deque(maxlen=buffer_size)
+
+    def _on_step(self) -> bool:
+        for i, done in enumerate(self.locals["dones"]):
+            if done:
+                travel = self.locals["infos"][i].get("cumulative_travel", 0.0)
+                self._path_buffer.append(travel)
+        if self._path_buffer:
+            mean_path = float(np.mean(self._path_buffer))
+            self.model.logger.record("rollout/ep_path_length_mean", mean_path)
+        return True
+
+    @property
+    def ep_path_length_mean(self) -> float | None:
+        return float(np.mean(self._path_buffer)) if self._path_buffer else None
+
+
+# ============================================================
+# Greedy competition wrapper
+# ============================================================
+class GreedyCompetitionWrapper(gym.Wrapper):
+    """
+    After every completed episode, adds COMPETITION_SCALE × (greedy_travel − rl_travel)
+    to the final step reward.  Positive when RL beats greedy, negative when it loses.
+
+    On each reset() the wrapper clones the fresh board state onto a shadow env and
+    runs the greedy solver (min trip-cost at each step) to record the baseline
+    travel distance for that specific task instance.
+    """
+
+    def __init__(self, env):
+        super().__init__(env)
+        from training_env.wordle_env import WordleEnv
+        self._shadow = WordleEnv(
+            stage           = env.stage,
+            reward_callback = env.reward_callback,
+        )
+        self._greedy_travel: float = 0.0
+
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        self._greedy_travel = self._run_greedy()
+        return obs, info
+
+    def _run_greedy(self):
+        from training_env.wordle_env import ALL_POSITIONS, N_CELLS, compute_travel
+        src = self.env
+        s   = self._shadow
+
+        # Clone board state — no randomisation, exact copy of what RL will face
+        s.target_word            = src.target_word
+        s.position_letter        = list(src.position_letter)
+        s.position_occupied      = src.position_occupied.copy()
+        s.wordle_correct         = src.wordle_correct.copy()
+        s.robot_pos              = src.robot_pos.copy()
+        s.required_slots         = set(src.required_slots)
+        s.already_rewarded_slots = set()
+        s._step_count            = 0
+        s._cumulative_travel     = 0.0
+        s._invalid_action_count  = 0
+        s.action_log             = []
+
+        done = False
+        while not done:
+            masks = s.action_masks()
+            valid = [i for i, m in enumerate(masks) if m]
+            if not valid:
+                break
+            best = min(
+                valid,
+                key=lambda a: compute_travel(
+                    s.robot_pos,
+                    ALL_POSITIONS[a // N_CELLS],
+                    ALL_POSITIONS[a %  N_CELLS],
+                ),
+            )
+            _, _, terminated, truncated, _ = s.step(best)
+            done = terminated or truncated
+
+        return s._cumulative_travel
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        if (terminated or truncated) and info.get("word_complete"):
+            reward += COMPETITION_SCALE * (self._greedy_travel - info["cumulative_travel"])
+        return obs, reward, terminated, truncated, info
 
 
 # ============================================================
@@ -105,7 +218,7 @@ def custom_reward(
     if moving_correct_out:
         reward += MOVE_CORRECT_OUT_PENALTY
 
-    if clearing_to_staging:
+    if clearing_to_staging and not moving_correct_out:
         reward += CLEARING_BONUS
 
     if placing_correct and not slot_already_rewarded:
@@ -131,11 +244,12 @@ def make_env():
     here in custom_reward() so constants can be tuned without editing the env.
     """
     from training_env.wordle_env import WordleEnv
-    return WordleEnv(
+    env = WordleEnv(
         stage            = CURRICULUM_STAGE,
         reward_callback  = custom_reward,
-        observation_callback = None,   # env uses internal _build_obs()
+        observation_callback = None,
     )
+    return GreedyCompetitionWrapper(env)
 
 
 # ============================================================
@@ -150,12 +264,13 @@ def get_next_version() -> int:
     return v
 
 
-def save_training_log(version, model, total_timesteps, curriculum_stage):
+def save_training_log(version, model, total_timesteps, curriculum_stage, path_cb: PathLengthCallback | None = None):
     """Append a training run summary to LOG_FILE."""
     from datetime import datetime
-    buf    = model.ep_info_buffer
-    ep_rew = round(float(np.mean([e["r"] for e in buf])), 2) if buf else "N/A"
-    ep_len = round(float(np.mean([e["l"] for e in buf])), 2) if buf else "N/A"
+    buf        = model.ep_info_buffer
+    ep_rew     = round(float(np.mean([e["r"] for e in buf])), 2) if buf else "N/A"
+    ep_len     = round(float(np.mean([e["l"] for e in buf])), 2) if buf else "N/A"
+    ep_path    = round(path_cb.ep_path_length_mean, 2) if path_cb and path_cb.ep_path_length_mean is not None else "N/A"
 
     with open(LOG_FILE, "a") as f:
         f.write(f"\n{'='*48}\n")
@@ -164,6 +279,7 @@ def save_training_log(version, model, total_timesteps, curriculum_stage):
         f.write(f"  total_timesteps         : {total_timesteps}\n")
         f.write(f"  ep_rew_mean             : {ep_rew}\n")
         f.write(f"  ep_len_mean             : {ep_len}\n")
+        f.write(f"  ep_path_length_mean (m) : {ep_path}\n")
         f.write(f"\n  -- Reward Config --\n")
         f.write(f"  WORD_COMPLETE_BONUS     : {WORD_COMPLETE_BONUS}\n")
         f.write(f"  CORRECT_PLACEMENT_BONUS : {CORRECT_PLACEMENT_BONUS}\n")
@@ -206,7 +322,12 @@ if __name__ == "__main__":
             learning_rate   = LEARNING_RATE,
             n_steps         = N_STEPS,
             batch_size      = BATCH_SIZE,
-            ent_coef        = 0.01,
+            n_epochs        = 10,
+            gamma           = 0.99,
+            gae_lambda      = 0.95,
+            clip_range      = 0.2,
+            ent_coef        = 0.03,   # reduced from 0.05; 0.01 risks locking ordering too early
+            vf_coef         = 0.7,    # raised from 0.5 to give critic more gradient signal
             tensorboard_log = LOGS_DIR,
             verbose         = 1,
         )
@@ -216,16 +337,17 @@ if __name__ == "__main__":
         save_path   = MODEL_DIR,
         name_prefix = MODEL_NAME,
     )
+    path_callback = PathLengthCallback(buffer_size=100)
 
     model.learn(
         total_timesteps     = TOTAL_TIMESTEPS,
-        callback            = checkpoint_callback,
+        callback            = [checkpoint_callback, path_callback],
         reset_num_timesteps = False,
     )
 
     version = get_next_version()
     model.save(os.path.join(MODEL_DIR, f"{MODEL_NAME}_v{version}"))
     model.save(latest_path)
-    save_training_log(version, model, model.num_timesteps, CURRICULUM_STAGE)
+    save_training_log(version, model, model.num_timesteps, CURRICULUM_STAGE, path_callback)
     print(f"Saved  ->  {MODEL_DIR}/{MODEL_NAME}_v{version}.zip  +  {latest_path}.zip")
     print(f"Log    ->  {LOG_FILE}")
