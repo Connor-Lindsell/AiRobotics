@@ -58,7 +58,7 @@ COMPETITION_SCALE         =   3.0
 #   C3: 5 letters → 5 staging slots occupied, full word
 #   C4: 1 wrong Wordle letter + 5 correct letters in staging (clear + fill)
 #   C5: 3–5 wrong Wordle letters + 5 correct letters in staging (full rearrange)
-CURRICULUM_STAGE = 3
+CURRICULUM_STAGE = 4
 
 # ============================================================
 # Model and log paths

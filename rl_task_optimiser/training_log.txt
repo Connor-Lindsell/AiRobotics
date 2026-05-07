@@ -411,3 +411,31 @@ Run v4  |  2026-05-07 23:34:36  |  Stage C3
   batch_size              : 64
   ent_coef                : 0.05
 ================================================
+
+================================================
+Run v5  |  2026-05-07 23:52:10  |  Stage C3
+
+  -- Results --
+  total_timesteps         : 501760
+  ep_rew_mean             : 132.3
+  ep_len_mean             : 10.0
+  ep_path_length_mean (m) : 56.63
+
+  -- Reward Config --
+  WORD_COMPLETE_BONUS     : 100.0
+  CORRECT_PLACEMENT_BONUS : 20.0
+  CLEARING_BONUS          : 15.0
+  WRONG_SLOT_PENALTY      : -20.0
+  MOVE_CORRECT_OUT_PENALTY: -10.0
+  STEP_PENALTY            : -1.0
+  TRAVEL_COST_SCALE       : -2.0
+  CURRICULUM_STAGE        : C3
+
+  -- PPO Hyperparameters --
+  TOTAL_TIMESTEPS         : 501760
+  N_ENVS                  : 1
+  learning_rate           : 0.0003
+  n_steps                 : 2048
+  batch_size              : 64
+  ent_coef                : 0.05
+================================================
