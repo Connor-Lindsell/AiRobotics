@@ -26,6 +26,7 @@ Observation (2686 floats):
 """
 
 import math
+import os
 import random
 import numpy as np
 import gymnasium as gym
@@ -91,10 +92,20 @@ MAX_STEPS_PER_STAGE = {1: 10, 2: 15, 3: 25, 4: 35}
 MAX_OBJECTS = 5
 N_POS       = N_CELLS  # used by test.py
 
-WORD_LIST = [
-    "CRANE", "PLANT", "BRICK", "WATER", "STORM",
-    "GRAPE", "FLAME", "CHAIR", "TRAIN", "CLOUD",
-]
+def _load_dictionary() -> list[str]:
+    path = os.path.join(os.path.dirname(__file__), "..", "dictionary.txt")
+    fallback = ["CRANE", "PLANT", "BRICK", "WATER", "STORM",
+                "GRAPE", "FLAME", "CHAIR", "TRAIN", "CLOUD"]
+    try:
+        with open(path, encoding="utf-8") as f:
+            words = [w.strip().upper() for w in f if len(w.strip()) == 5 and w.strip().isalpha()]
+        return words if words else fallback
+    except FileNotFoundError:
+        return fallback
+
+HOLDOUT_WORD = "GREAT"
+_FULL_WORD_LIST = _load_dictionary()
+WORD_LIST = [w for w in _FULL_WORD_LIST if w != HOLDOUT_WORD]
 
 
 # ============================================================
@@ -163,6 +174,7 @@ class WordleSequencingEnv(gym.Env):
         reward_callback,
         observation_callback=None,   # kept for API compat; unused
         target_word: str | None = None,
+        fixed_initial_positions: dict[int, str] | None = None,
         verbose: bool = False,
     ):
         super().__init__()
@@ -171,9 +183,10 @@ class WordleSequencingEnv(gym.Env):
 
         self.stage     = stage
         self.max_steps = MAX_STEPS_PER_STAGE[stage]
-        self._target_word_fixed   = target_word
-        self.reward_callback      = reward_callback
-        self.observation_callback = observation_callback
+        self._target_word_fixed      = target_word
+        self._fixed_initial_positions = fixed_initial_positions
+        self.reward_callback         = reward_callback
+        self.observation_callback    = observation_callback
         self.verbose = verbose
 
         self.action_space      = spaces.Discrete(ACTION_DIM)
@@ -217,13 +230,18 @@ class WordleSequencingEnv(gym.Env):
         self._cumulative_travel     = 0.0
         self._invalid_action_count  = 0
 
-        _reset_dispatch = {
-            1: self._reset_c1,
-            2: self._reset_c2,
-            3: self._reset_c3,
-            4: self._reset_c4,
-        }
-        _reset_dispatch[self.stage]()
+        if self._fixed_initial_positions is not None:
+            for cell_id, letter in self._fixed_initial_positions.items():
+                self._place(cell_id, letter)
+            self.required_slots = set(WORDLE_CELL_IDS)
+        else:
+            _reset_dispatch = {
+                1: self._reset_c1,
+                2: self._reset_c2,
+                3: self._reset_c3,
+                4: self._reset_c4,
+            }
+            _reset_dispatch[self.stage]()
 
         obs = self._build_obs()
         if self.verbose:

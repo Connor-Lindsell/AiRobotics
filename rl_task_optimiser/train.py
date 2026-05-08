@@ -315,19 +315,20 @@ if __name__ == "__main__":
     latest_path = os.path.join(MODEL_DIR, f"{MODEL_NAME}_latest")
     if os.path.exists(latest_path + ".zip"):
         print(f"Resuming from {latest_path}.zip  (Stage C{CURRICULUM_STAGE}) ...")
-        model = MaskablePPO.load(
-            latest_path,
-            env            = env,
-            tensorboard_log= LOGS_DIR,
-            custom_objects = {
-                "learning_rate": LEARNING_RATE,
-                "n_steps"      : N_STEPS,
-                "batch_size"   : BATCH_SIZE,
-                "n_epochs"     : 5,
-                "clip_range"   : 0.2,
-                "ent_coef"     : 0.01,
-            },
-        )
+        model = MaskablePPO.load(latest_path, env=env, tensorboard_log=LOGS_DIR)
+        # custom_objects only handles non-serialisable classes — set scalars directly
+        from stable_baselines3.common.utils import get_schedule_fn
+        model.learning_rate = LEARNING_RATE
+        model.lr_schedule   = get_schedule_fn(LEARNING_RATE)
+        model.clip_range    = get_schedule_fn(0.2)
+        model.ent_coef      = 0.01
+        model.n_steps       = N_STEPS
+        model.batch_size    = BATCH_SIZE
+        model.n_epochs      = 5
+        model.vf_coef       = 1.0   # boosted: critic value_loss is in the hundreds, needs more gradient
+        for pg in model.policy.optimizer.param_groups:
+            pg["lr"] = LEARNING_RATE
+        print(f"  Hyperparameters overridden: lr={LEARNING_RATE}, ent_coef=0.01, vf_coef=1.0")
     else:
         print(f"No previous model found — training from scratch (Stage C{CURRICULUM_STAGE}).")
         model = MaskablePPO(
@@ -341,7 +342,7 @@ if __name__ == "__main__":
             gae_lambda      = 0.95,
             clip_range      = 0.2,    # tighter than 0.2 — smaller policy steps at convergence
             ent_coef        = 0.01,  # low entropy: policy is converged, exploration adds noise
-            vf_coef         = 0.7,    # raised from 0.5 to give critic more gradient signal
+            vf_coef         = 1.0,    # boosted: critic value_loss in the hundreds, needs more gradient
             tensorboard_log = LOGS_DIR,
             verbose         = 1,
         )
