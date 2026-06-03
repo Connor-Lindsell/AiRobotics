@@ -11,11 +11,11 @@ from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
 # ============================================================
 # Total environment steps per training run. Later curriculum stages need more
 # steps to converge — increase if mean episode reward has not plateaued.
-TOTAL_TIMESTEPS = 200_000
+TOTAL_TIMESTEPS = 400_000
 
 # Adam optimizer step size. Reduced from 3e-4 — at convergence a lower rate
 # stabilises policy updates and reduces reward variance.
-LEARNING_RATE   = 3e-4
+LEARNING_RATE   = 5e-5
 
 # Steps collected per environment before each gradient update.
 # Increased from 4096 — larger rollouts average out stochastic episode variance.
@@ -23,10 +23,12 @@ N_STEPS         = 4096
 
 # Minibatch size. Increased from 128 for smoother gradient estimates.
 # Must divide N_STEPS evenly (8192 / 256 = 32, ratio unchanged).
-BATCH_SIZE      = 128
+BATCH_SIZE      = 256
 
 # Save a checkpoint every SAVE_FREQ environment steps.
 SAVE_FREQ       = 100_000
+
+ENTROPY_COEFFICIENT = 0.001
 
 # ============================================================
 # Reward shaping parameters
@@ -37,16 +39,16 @@ SAVE_FREQ       = 100_000
 WORD_COMPLETE_BONUS       = 100.0   # all required_slots correctly filled
 CORRECT_PLACEMENT_BONUS   =  20.0   # per newly correct Wordle slot (once per slot)
 CLEARING_BONUS            =  15.0   # clearing a wrong Wordle letter to staging
-WRONG_SLOT_PENALTY        = -20.0   # letter placed in wrong Wordle slot
+WRONG_SLOT_PENALTY        = -10.0   # letter placed in wrong Wordle slot
 MOVE_CORRECT_OUT_PENALTY  = -10.0   # evicting a correctly-placed letter
-STEP_PENALTY              =  -1.0   # per step — C3/C4 have variable step counts so
+STEP_PENALTY              =  -0.5   # per step — C3/C4 have variable step counts so
                                     # this provides a signal to complete efficiently
 TRAVEL_COST_SCALE         =  -2.0   # × travel distance (metres) — raised from -0.5 so
                                     # travel cost is ~24% of episode reward (was ~7%)
 
 # Reward per metre that RL beats greedy (negative when RL loses).
 # At 3.0: beating greedy by 5 m earns +15; losing by 5 m costs -15.
-COMPETITION_SCALE         =   10.0
+COMPETITION_SCALE         =   3.0
 
 # ============================================================
 # Curriculum stage
@@ -321,14 +323,14 @@ if __name__ == "__main__":
         model.learning_rate = LEARNING_RATE
         model.lr_schedule   = get_schedule_fn(LEARNING_RATE)
         model.clip_range    = get_schedule_fn(0.2)
-        model.ent_coef      = 0.01
+        model.ent_coef      = ENTROPY_COEFFICIENT
         model.n_steps       = N_STEPS
         model.batch_size    = BATCH_SIZE
         model.n_epochs      = 5
         model.vf_coef       = 1.0   # boosted: critic value_loss is in the hundreds, needs more gradient
         for pg in model.policy.optimizer.param_groups:
             pg["lr"] = LEARNING_RATE
-        print(f"  Hyperparameters overridden: lr={LEARNING_RATE}, ent_coef=0.01, vf_coef=1.0")
+        print(f"  Hyperparameters overridden: lr={LEARNING_RATE}, ent_coef={ENTROPY_COEFFICIENT}, vf_coef=1.0")
     else:
         print(f"No previous model found — training from scratch (Stage C{CURRICULUM_STAGE}).")
         model = MaskablePPO(
@@ -340,8 +342,8 @@ if __name__ == "__main__":
             n_epochs        = 5,      # fewer epochs reduces over-optimisation on stale rollouts
             gamma           = 0.99,
             gae_lambda      = 0.95,
-            clip_range      = 0.2,    # tighter than 0.2 — smaller policy steps at convergence
-            ent_coef        = 0.01,  # low entropy: policy is converged, exploration adds noise
+            clip_range      = 0.1,    # tighter than 0.2 — smaller policy steps at convergence
+            ent_coef        = ENTROPY_COEFFICIENT,  # low entropy: policy is converged, exploration adds noise
             vf_coef         = 1.0,    # boosted: critic value_loss in the hundreds, needs more gradient
             tensorboard_log = LOGS_DIR,
             verbose         = 1,

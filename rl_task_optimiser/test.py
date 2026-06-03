@@ -93,7 +93,7 @@ SCENARIOS = [
         "stage":       3,
         "target_word": HOLDOUT_WORD,
         "description": "C3 — all 5 Wordle slots blocked, 10 distractors, semi-constrained mask",
-        "n_episodes":  5,
+        "n_episodes":  20,
     },
     {
         "name":        "c4_full_autonomy",
@@ -163,6 +163,7 @@ class TaskSequencerEvaluator:
         rewards, cumulative_rewards = [], []
         cumulative        = 0.0
         total_travel      = 0.0
+        step_travels      = []
         all_path_segments = []
         step_frames       = []
 
@@ -179,6 +180,7 @@ class TaskSequencerEvaluator:
             cumulative += reward
             cumulative_rewards.append(cumulative)
             total_travel += info["travel_this_step"]
+            step_travels.append(info["travel_this_step"])
             all_path_segments.append(info.get("path_segments", []))
             step_frames.append({
                 "source_id":    source_id,
@@ -203,6 +205,7 @@ class TaskSequencerEvaluator:
             "rewards":            rewards,
             "cumulative_rewards": cumulative_rewards,
             "total_travel":       total_travel,
+            "step_travels":       step_travels,
             "target_word":        env.target_word,
             "success":            info["word_complete"],
             "n_steps":            env._step_count,
@@ -261,6 +264,7 @@ class TaskSequencerEvaluator:
         rewards, cumulative_rewards = [], []
         cumulative        = 0.0
         total_travel      = 0.0
+        step_travels      = []
         all_path_segments = []
         step_frames       = []
 
@@ -277,6 +281,7 @@ class TaskSequencerEvaluator:
             cumulative += reward
             cumulative_rewards.append(cumulative)
             total_travel += info["travel_this_step"]
+            step_travels.append(info["travel_this_step"])
             all_path_segments.append(info.get("path_segments", []))
             step_frames.append({
                 "source_id":    source_id,
@@ -299,6 +304,7 @@ class TaskSequencerEvaluator:
             "rewards":            rewards,
             "cumulative_rewards": cumulative_rewards,
             "total_travel":       total_travel,
+            "step_travels":       step_travels,
             "target_word":        env.target_word,
             "success":            info["word_complete"],
             "n_steps":            env._step_count,
@@ -334,9 +340,11 @@ class TaskSequencerEvaluator:
 
         successful_idx = [i for i, t in enumerate(rl_results) if t["success"]]
         if successful_idx:
-            best_idx = min(successful_idx, key=lambda i: rl_results[i]["total_travel"])
+            best_idx = min(successful_idx, 
+                        key=lambda i: rl_results[i]["total_travel"] - greedy_results[i]["total_travel"])
         else:
-            best_idx = min(range(n), key=lambda i: rl_results[i]["total_travel"])
+            best_idx = min(range(n), 
+                        key=lambda i: rl_results[i]["total_travel"] - greedy_results[i]["total_travel"])
 
         return best_idx, rl_results, greedy_results
 
@@ -381,19 +389,30 @@ class TaskSequencerEvaluator:
                 self.print_episode_debug(greedy_traj, f"Greedy ep{ep+1}")
                 self.print_head_to_head(rl_traj, greedy_traj, ep + 1)
 
-            # Find best RL episode to animate
-            successful_idx = [i for i, t in enumerate(rl_results) if t["success"]]
-            if successful_idx:
-                best_idx = min(successful_idx, key=lambda i: rl_results[i]["total_travel"])
-            else:
-                best_idx = min(range(n_eps), key=lambda i: rl_results[i]["total_travel"])
+            # Find best episode — where RL beats greedy by largest margin
+            # margin = greedy_travel - rl_travel (positive = RL wins)
+            successful_rl = [i for i, t in enumerate(rl_results) if t["success"]]
 
-            self.visualise_scenario(rl_results, greedy_results, name, best_idx)
+            if successful_rl:
+                best_rl_idx = max(successful_rl,
+                                key=lambda i: greedy_results[i]["total_travel"] - rl_results[i]["total_travel"])
+            else:
+                # fallback: just pick lowest RL travel overall
+                best_rl_idx = min(range(n_eps), key=lambda i: rl_results[i]["total_travel"])
+
+            best_g_idx = best_rl_idx  # same episode = same board = fair comparison
+
+            print(f"  Best episode: ep{best_rl_idx+1}  "
+                f"(RL {rl_results[best_rl_idx]['total_travel']:.2f}m vs "
+                f"Greedy {greedy_results[best_rl_idx]['total_travel']:.2f}m, "
+                f"margin {greedy_results[best_rl_idx]['total_travel'] - rl_results[best_rl_idx]['total_travel']:.2f}m)")
+
+            self.visualise_scenario(rl_results, greedy_results, name, best_rl_idx, best_g_idx)
 
             if animate:
                 self.animate_episode(
-                    rl_results[best_idx], greedy_results[best_idx],
-                    name, ep=best_idx,
+                    rl_results[best_rl_idx], greedy_results[best_rl_idx],
+                    name, ep=best_rl_idx,
                 )
 
             self.print_aggregate_comparison(rl_results, greedy_results, name)
@@ -467,28 +486,46 @@ class TaskSequencerEvaluator:
         rl_results: list[dict],
         greedy_results: list[dict],
         scenario_name: str,
-        best_idx: int = 0,
+        best_rl_idx: int = 0,
+        best_g_idx: int = 0,
     ) -> None:
         """
-        Save a 2×2 figure for the scenario using the best episode for workspace/reward plots.
+        Save a 2×3 figure for the scenario using the best episode for workspace/reward plots.
         """
         os.makedirs(LOGS_DIR, exist_ok=True)
-        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        fig, axes = plt.subplots(2, 3, figsize=(20, 10))
 
-        rl_best     = rl_results[best_idx]
-        greedy_best = greedy_results[best_idx]
+        rl_best     = rl_results[best_rl_idx]
+        greedy_best = greedy_results[best_g_idx]
 
-        ep_label = f"ep{best_idx+1} (best)"
-        self.plot_workspace(axes[0, 0], rl_best,     f"RL Agent  ({ep_label}, target: {rl_best['target_word']})")
-        self.plot_workspace(axes[0, 1], greedy_best, f"Greedy Baseline  ({ep_label}, target: {greedy_best['target_word']})")
-        self.plot_reward_curve(axes[1, 0], rl_best, greedy_best, f"Cumulative Reward — {ep_label}")
+        ep_rl_label = f"ep{best_rl_idx+1} (best)"
+        ep_g_label  = f"ep{best_g_idx+1} (best)"
+
+        self.plot_workspace(axes[0, 0], rl_best,     f"RL Agent  ({ep_rl_label}, target: {rl_best['target_word']})")
+        self.plot_workspace(axes[0, 1], greedy_best, f"Greedy Baseline  ({ep_g_label}, target: {greedy_best['target_word']})")
+        self.plot_reward_curve(axes[1, 0], rl_best, greedy_best,
+                            f"Cumulative Reward — {ep_rl_label}")
         self.plot_travel_comparison(axes[1, 1], rl_results, greedy_results,
                                     f"Total Travel Distance — all {len(rl_results)} episodes")
+        self.plot_travel_per_step(axes[1, 2], rl_best, greedy_best,
+                                f"Cumulative Distance — RL ep{best_rl_idx+1} vs Greedy ep{best_g_idx+1}")
+
+        # Summary stats in empty top-right slot
+        summary = (
+            f"RL avg travel:     {sum(r['total_travel'] for r in rl_results)/len(rl_results):.2f} m\n"
+            f"Greedy avg travel: {sum(r['total_travel'] for r in greedy_results)/len(greedy_results):.2f} m\n"
+            f"RL success rate:   {sum(r['success'] for r in rl_results)}/{len(rl_results)}\n"
+            f"Greedy success:    {sum(r['success'] for r in greedy_results)}/{len(greedy_results)}"
+        )
+        axes[0, 2].text(0.1, 0.5, summary, transform=axes[0, 2].transAxes,
+                        fontsize=12, verticalalignment="center", family="monospace")
+        axes[0, 2].set_title("Aggregate Summary")
+        axes[0, 2].axis("off")
 
         rl_tick = "✓" if rl_best["success"] else "✗"
         g_tick  = "✓" if greedy_best["success"] else "✗"
         fig.suptitle(
-            f"Scenario: {scenario_name}  |  RL {ep_label}: {rl_tick}  |  Greedy {ep_label}: {g_tick}",
+            f"Scenario: {scenario_name}  |  RL {ep_rl_label}: {rl_tick}  |  Greedy {ep_g_label}: {g_tick}",
             fontsize=13,
         )
         plt.tight_layout()
@@ -572,6 +609,24 @@ class TaskSequencerEvaluator:
         ax.axhline(0, color="grey", linewidth=0.5, linestyle=":")
         ax.set_xlabel("Step")
         ax.set_ylabel("Cumulative Reward")
+        ax.set_title(title)
+        ax.legend()
+    
+    def plot_travel_per_step(self, ax, rl_traj: dict, greedy_traj: dict, title: str) -> None:
+        rl_cumulative     = np.cumsum(rl_traj["step_travels"])
+        greedy_cumulative = np.cumsum(greedy_traj["step_travels"])
+
+        steps_rl     = list(range(1, len(rl_cumulative) + 1))
+        steps_greedy = list(range(1, len(greedy_cumulative) + 1))
+
+        ax.plot(steps_rl,     rl_cumulative,
+                label="RL Agent",        color="steelblue", marker="o", markersize=4)
+        ax.plot(steps_greedy, greedy_cumulative,
+                label="Greedy Baseline", color="darkorange", linestyle="--",
+                marker="x", markersize=4)
+        ax.axhline(0, color="grey", linewidth=0.5, linestyle=":")
+        ax.set_xlabel("Step")
+        ax.set_ylabel("Cumulative Distance Travelled (m)")
         ax.set_title(title)
         ax.legend()
 
